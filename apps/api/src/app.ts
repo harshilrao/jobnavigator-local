@@ -8,6 +8,7 @@ import authRouter from './modules/auth/auth.route';
 import personaRouter from './modules/persona/persona.route';
 import documentsRouter from './modules/documents/document.route';
 import jobsRouter from './modules/jobs/job.route';
+import scrapeRouter from './modules/scraping/scrape.route';
 import { getEnv } from './config/env';
 
 export function createApp(): Application {
@@ -43,6 +44,9 @@ export function createApp(): Application {
   app.use('/api/persona', personaRouter);
   app.use('/api/documents', documentsRouter);
   app.use('/api/jobs', jobsRouter);
+
+// Protected scraping routes (require valid access token).
+app.use('/api/scrape', scrapeRouter);
 
   // Development-only demo endpoint (harmless deterministic fixtures).
   if (env.NODE_ENV === 'development') {

@@ -176,3 +176,63 @@ TypeScript compilation errors fixed in Phase 2 backend modules (see "Files chang
 ---
 
 **STOP — Phase 3 gates all pass. Awaiting `APPROVE PHASE 4` (scraping / ATS boards) (do not start Phase 4).**
+
+---
+
+## Phase 4 — Scraping / ATS boards — IMPLEMENTED
+
+**Goal:** Selected jobs appear in the table while a real scraping session is running. Provider adapter contract, Greenhouse/Lever/Ashby/SmartRecruiters adapters, scrape sessions with SSE live progress, cooperative cancellation, dedup, missing-JD handling, and local fixture testing.
+
+**Backend implemented**
+- `packages/shared/src/filter.ts` + `index.ts` — `ScrapeSourceSchema`, `ScrapeSource`, `SourcePolicies`, `ScrapeSourceDescriptor`, `ScrapeSourceAdapter`, `FetchJobsParams`, `RawJob`, `JobDetail`, `FetchJobsResult` types.
+- `apps/api/src/modules/scraping/adapter.ts` — `RateLimiter`, `sleep`, adapter registry primitives.
+- `apps/api/src/modules/scraping/adapters/{greenhouse,lever,ashby,smartrecruiters}.ts` — provider adapters implementing `fetchJobs`/`fetchDetail` with rate limiting, timeouts, cooperative cancellation via `AbortSignal`, and polite backoff (concurrency cap 2 per source).
+- `apps/api/src/modules/scraping/adapters/index.ts` — `DESCRIPTORS` for UI listing, `createAdapter` factory, `listAdapters`, `getAdapterDescriptor`, `isSourceSupported`.
+- `apps/api/src/modules/scraping/scrape.model.ts` — `ScrapeSessionDoc` (ownerId, filterSnapshot, sources, status, counts, timestamps) and `ScrapeEventDoc` (sessionId, ownerId, type, source, message, jobId, jobTitle, counts, progress, timestamp) Mongoose models with indexes.
+- `apps/api/src/modules/scraping/scrape.service.ts` — `createScrapeSession`, `getScrapeSession`, `cancelScrapeSession`, `listScrapeSessions`, `getScrapeEvents`, `runScrapeSession` (main loop with per-owner dedup, per-source counts, cooperative cancellation via DB re-check, missing-description tracking, SSE events), `subscribeToScrapeSession` (SSE with persisted-event replay), `getAvailableAdapters`. `runScrapeSession` uses atomic `findOneAndUpdate` status transition to prevent concurrent runs.
+- `apps/api/src/modules/scraping/scrape.route.ts` — `POST/GET /api/scrape/sessions`, `GET /:id/events` (SSE), `POST /:id/cancel`, `GET /sessions`, `GET /adapters`; all `requireAuth`.
+- `apps/api/src/modules/scraping/fixtures/ats-server.ts` — local fixture ATS servers on ports 9001-9004 for development/testing (no live provider credentials).
+- `apps/api/src/app.ts` — mounts `scrapeRouter` at `/api/scrape` after `jobsRouter`.
+- `apps/api/tests/scraping.test.ts` — adapter fetchJobs/fetchDetail tests against fixtures + scrape session create/run/cancel/dedup/list/events tests (17 tests).
+
+**Backend gates** — executed and passing (with `MONGODB_URI` set against Atlas Free `jobnavigator_local`):
+| Gate | Command | Result |
+|------|---------|--------|
+| typecheck | `npm run typecheck` | ✅ Pass (api, web, shared) |
+| lint | `npm run lint` | ✅ Pass (0 errors; only pre-existing non-failing warnings) |
+| test | `npm run test` | ✅ Pass (59 tests: api 52, web 1, shared 4) |
+| build | `npm run build` | ✅ Pass (api tsc, web vite, shared tsc) |
+| smoke | `npm run smoke` | ✅ Pass (api 3, web 1) |
+
+**Test results (against real MongoDB Atlas `jobnavigator_local`):**
+- scraping.test.ts: 17/17 (adapter fetchJobs/fetchDetail, session create/run/cancel/dedup/list/events)
+- All previous Phase 2 and Phase 3 tests still pass.
+
+**Collections added (Atlas `jobnavigator_local`):** `scrapesessions`, `scrapeevents`.
+
+**Frontend implemented**
+- `apps/web/src/lib/api.ts` — auth client (login/register/me/logout with localStorage persistence) + typed scrape client (`getAdapters`, `createScrapeSession`, `runScrapeSession` via `POST /run`, `getScrapeSession`, `listScrapeSessions`, `cancelScrapeSession`, `scrapeEventStream` SSE reader).
+- `apps/web/src/pages/Login.tsx` — login/register form that sets the bearer token and current user.
+- `apps/web/src/pages/Scrape.tsx` — scrape sessions page: available-source grid, start-scrape form (query, locations, multi-source checkboxes), live SSE event stream with per-event icons/messages, per-source counts, Save/Unsave-style Cancel button, terminal-state banner, and recent-sessions table.
+- `apps/web/src/pages/Settings.tsx` — per-source adapter identifier configuration persisted to localStorage (board ID / company ID per ATS source).
+- `apps/web/src/pages/Jobs.tsx` — jobs table now auto-refreshes (live badge) while a scrape session is queued/running so scraped jobs appear without reload; Save/Unsave actions.
+- `apps/web/src/App.tsx`, `Sidebar.tsx`, `TopBar.tsx` — auth state (signed-in/out), Scrape nav item, sign-in/sign-out, login-gated pages.
+
+**Collections added (Atlas `jobnavigator_local`):** `scrapesessions`, `scrapeevents`.
+
+**Full Phase 4 gates** — executed and passing (with `MONGODB_URI` set against Atlas Free `jobnavigator_local`):
+| Gate | Command | Result |
+|------|---------|--------|
+| typecheck | `npm run typecheck` | ✅ Pass (api, web, shared) |
+| lint | `npm run lint` | ✅ Pass (0 errors; only pre-existing non-failing warnings) |
+| test | `npm run test` | ✅ Pass (59 tests: api 52, web 1, shared 4) |
+| build | `npm run build` | ✅ Pass (api tsc, web vite, shared tsc) |
+| smoke | `npm run smoke` | ✅ Pass (api 3, web 1) |
+
+**Test results (against real MongoDB Atlas `jobnavigator_local`):**
+- scraping.test.ts: 17/17 (adapter fetchJobs/fetchDetail, session create/run/cancel/dedup/list/events)
+- All previous Phase 2 and Phase 3 tests still pass.
+
+Phase 4 complete: backend + frontend. Selected jobs appear in the Jobs table while a real scraping session runs; live SSE progress, cooperative cancellation, per-owner dedup, missing-JD tracking, and adapter configuration in Settings.
+
+**STOP — Phase 4 (scraping / ATS boards) complete. Awaiting `APPROVE PHASE 4`.**

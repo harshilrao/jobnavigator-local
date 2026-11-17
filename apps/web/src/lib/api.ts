@@ -1,14 +1,50 @@
+import type { JobFilter } from '@jobnavigator/shared';
+
+export type { JobFilter } from '@jobnavigator/shared';
+
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:3000';
 
-/** Bearer token held in memory; set from localStorage by the page that needs auth. */
+/** Bearer token held in memory; persisted to localStorage so sessions survive reloads. */
 let authToken: string | null = null;
+let currentUser: { id: string; email: string } | null = null;
+
+function loadStoredSession(): void {
+  if (typeof localStorage === 'undefined') return;
+  const stored = localStorage.getItem('jn_token');
+  if (stored) authToken = stored;
+  const userRaw = localStorage.getItem('jn_user');
+  if (userRaw) {
+    try {
+      currentUser = JSON.parse(userRaw);
+    } catch {
+      /* ignore corrupt stored user */
+    }
+  }
+}
+loadStoredSession();
 
 export function setAuthToken(token: string | null) {
   authToken = token;
+  if (typeof localStorage !== 'undefined') {
+    if (token) localStorage.setItem('jn_token', token);
+    else localStorage.removeItem('jn_token');
+  }
 }
 
 export function getAuthToken(): string | null {
   return authToken;
+}
+
+export function setCurrentUser(user: { id: string; email: string } | null) {
+  currentUser = user;
+  if (typeof localStorage !== 'undefined') {
+    if (user) localStorage.setItem('jn_user', JSON.stringify(user));
+    else localStorage.removeItem('jn_user');
+  }
+}
+
+export function getCurrentUser(): { id: string; email: string } | null {
+  return currentUser;
 }
 
 async function fetchJson<T>(
@@ -151,30 +187,6 @@ export interface JobListResult {
   totalPages: number;
 }
 
-export interface JobFilter {
-  q?: string;
-  savedState?: 'saved' | 'ignored' | 'viewed' | 'none';
-  remoteType?: 'remote' | 'hybrid' | 'onsite' | 'unspecified';
-  seniority?: 'intern' | 'entry' | 'mid' | 'senior' | 'lead' | 'unspecified';
-  employmentType?:
-    | 'full-time'
-    | 'part-time'
-    | 'contract'
-    | 'temporary'
-    | 'freelance'
-    | 'unspecified';
-  descriptionStatus?: 'complete' | 'partial' | 'missing' | 'blocked' | 'closed';
-  qualityStatus?: 'good' | 'limited' | 'unsupported';
-  isClosed?: boolean;
-  sources?: string[];
-  minSalary?: number;
-  maxSalary?: number;
-  page?: number;
-  limit?: number;
-  sort?: 'createdAt' | 'title';
-  order?: 'asc' | 'desc';
-}
-
 export async function getJobs(
   filter: JobFilter,
   token?: string | null,
@@ -281,6 +293,250 @@ export async function updateUserJob(
     method: 'PATCH',
     body: JSON.stringify(update),
   }, token);
+}
+
+// ----- Auth -----
+
+export interface Credentials {
+  email: string;
+  password: string;
+}
+
+export interface AuthResponse {
+  accessToken: string;
+  refreshToken: string;
+  user: {
+    id: string;
+    email: string;
+    role?: string;
+    accountStatus?: string;
+    preferences?: unknown;
+  };
+}
+
+export async function login(credentials: Credentials): Promise<AuthResponse> {
+  return fetchJson<AuthResponse>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(credentials),
+  });
+}
+
+export async function register(credentials: Credentials): Promise<AuthResponse> {
+  return fetchJson<AuthResponse>('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify(credentials),
+  });
+}
+
+export async function getMe(): Promise<AuthResponse['user']> {
+  return fetchJson<AuthResponse['user']>('/api/auth/me', undefined, getAuthToken());
+}
+
+export async function logout(refreshToken?: string): Promise<{ ok: boolean }> {
+  try {
+    return fetchJson<{ ok: boolean }>('/api/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify({ refreshToken }),
+    }, getAuthToken());
+  } finally {
+    setAuthToken(null);
+    setCurrentUser(null);
+  }
+}
+
+// ----- Scrape (Phase 4) -----
+
+export type ScrapeSessionStatus =
+  | 'queued'
+  | 'running'
+  | 'paused'
+  | 'cancelled'
+  | 'completed'
+  | 'failed';
+
+export type ScrapeEventType =
+  | 'started'
+  | 'source_started'
+  | 'job_discovered'
+  | 'job_saved'
+  | 'job_skipped'
+  | 'progress'
+  | 'error'
+  | 'cancelled'
+  | 'complete';
+
+export interface ScrapeSourceCount {
+  source: string;
+  fetched: number;
+  valid: number;
+  matchedFilters: number;
+  duplicates: number;
+  saved: number;
+  skipped: number;
+  failed: number;
+  missingDescriptions: number;
+}
+
+export interface ScrapeSession {
+  id: string;
+  status: ScrapeSessionStatus;
+  sources: string[];
+  locations: string[];
+  counts: ScrapeSourceCount[];
+  totalFetched: number;
+  totalSaved: number;
+  totalSkipped: number;
+  totalFailed: number;
+  startedAt: string;
+  completedAt?: string;
+  cancelledAt?: string;
+  cancelRequested: boolean;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ScrapeEvent {
+  type: ScrapeEventType;
+  source?: string;
+  message?: string;
+  jobId?: string;
+  jobTitle?: string;
+  counts?: ScrapeSourceCount[];
+  progress?: number;
+  timestamp: string;
+}
+
+export interface AdapterDescriptor {
+  sourceId: string;
+  supportsQuery: boolean;
+  supportsCompany: boolean;
+  supportsLocation: boolean;
+  sourcePolicies: {
+    rateLimitMs: number;
+    concurrency: number;
+    timeoutMs: number;
+    respectsRobots: boolean;
+    requiresAuth: boolean;
+  };
+  configured: boolean;
+}
+
+export interface CreateSessionRequest {
+  filter?: JobFilter;
+  sources: string[];
+  locations?: string[];
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getAuthToken();
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
+export async function getAdapters(): Promise<{ adapters: AdapterDescriptor[] }> {
+  return fetchJson<{ adapters: AdapterDescriptor[] }>('/api/scrape/adapters', undefined, getAuthToken());
+}
+
+export async function createScrapeSession(body: CreateSessionRequest): Promise<{
+  id: string;
+  status: ScrapeSessionStatus;
+  sources: string[];
+  createdAt: string;
+}> {
+  return fetchJson(`/api/scrape/sessions`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }, getAuthToken());
+}
+
+export async function getScrapeSession(id: string): Promise<ScrapeSession> {
+  return fetchJson<ScrapeSession>(`/api/scrape/sessions/${encodeURIComponent(id)}`, undefined, getAuthToken());
+}
+
+export async function listScrapeSessions(): Promise<{ sessions: ScrapeSession[] }> {
+  return fetchJson<{ sessions: ScrapeSession[] }>('/api/scrape/sessions', undefined, getAuthToken());
+}
+
+export async function cancelScrapeSession(id: string): Promise<{
+  id: string;
+  status: ScrapeSessionStatus;
+  cancelRequested: boolean;
+}> {
+  return fetchJson(`/api/scrape/sessions/${encodeURIComponent(id)}/cancel`, {
+    method: 'POST',
+  }, getAuthToken());
+}
+
+export interface StreamController {
+  close(): void;
+}
+
+export function scrapeEventStream(
+  sessionId: string,
+  onEvent: (event: ScrapeEvent) => void,
+  onError?: (err: unknown) => void,
+): StreamController {
+  const controller = new AbortController();
+  let closed = false;
+
+  const promise = fetch(`${API_BASE}/api/scrape/sessions/${encodeURIComponent(sessionId)}/events`, {
+    headers: {
+      ...authHeaders(),
+      Accept: 'text/event-stream',
+      'Cache-Control': 'no-cache',
+    },
+    signal: controller.signal,
+  });
+
+  promise.then(async (res) => {
+    if (closed) return;
+    if (!res.ok || !res.body) {
+      if (onError) onError(new Error(`SSE stream failed (${res.status})`));
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+      while (!closed) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buffer.indexOf('\n\n')) >= 0) {
+          const chunk = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          if (chunk.startsWith('data: ')) {
+            const payload = chunk.slice(6);
+            try {
+              onEvent(JSON.parse(payload) as ScrapeEvent);
+            } catch {
+              /* ignore malformed event */
+            }
+          }
+        }
+      }
+    } catch (err) {
+      if (!closed && onError) onError(err);
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        /* ignore */
+      }
+    }
+  }).catch((err) => {
+    if (!closed && onError) onError(err);
+  });
+
+  return {
+    close: () => {
+      closed = true;
+      controller.abort();
+    },
+  };
 }
 
 export { API_BASE };
