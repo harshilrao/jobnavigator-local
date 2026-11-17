@@ -6,9 +6,19 @@ import { Jobs } from '@/pages/Jobs';
 import { Searches } from '@/pages/Searches';
 import { Documents } from '@/pages/Documents';
 import { Settings } from '@/pages/Settings';
+import { Login } from '@/pages/Login';
+import { Scrape } from '@/pages/Scrape';
+import { getCurrentUser } from '@/lib/api';
 
 export type Theme = 'light' | 'dark' | 'system';
-export type Page = 'dashboard' | 'jobs' | 'searches' | 'documents' | 'settings';
+export type Page =
+  | 'dashboard'
+  | 'jobs'
+  | 'searches'
+  | 'documents'
+  | 'settings'
+  | 'login'
+  | 'scrape';
 
 function resolveTheme(theme: Theme): 'light' | 'dark' {
   if (theme === 'system') {
@@ -24,6 +34,7 @@ function resolveTheme(theme: Theme): 'light' | 'dark' {
 export function App() {
   const [theme, setTheme] = useState<Theme>('system');
   const [page, setPage] = useState<Page>('dashboard');
+  const [user, setUser] = useState(() => getCurrentUser());
 
   useEffect(() => {
     const stored = localStorage.getItem('jn_theme') as Theme | null;
@@ -41,22 +52,59 @@ export function App() {
     setTheme((t) => (t === 'light' ? 'dark' : t === 'dark' ? 'system' : 'light'));
   }, []);
 
+  const handleLogin = useCallback((u: { id: string; email: string }) => {
+    setUser(u);
+    setPage('dashboard');
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    setUser(null);
+    setPage('dashboard');
+  }, []);
+
+  const requiresAuth: Page[] = ['jobs', 'searches', 'documents', 'settings', 'scrape'];
+
   const pages: Record<Page, React.ReactNode> = {
     dashboard: <Dashboard />,
     jobs: <Jobs />,
     searches: <Searches />,
     documents: <Documents />,
-    settings: <Settings theme={theme} setTheme={setTheme} />,
+    settings: <Settings theme={theme} setTheme={setTheme} user={user} />,
+    login: <Login onAuthenticated={handleLogin} />,
+    scrape: <Scrape />,
   };
+
+  const content = requiresAuth.includes(page) && !user ? (
+    <div className="layer-panel p-6 max-w-md mx-auto">
+      <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-4">
+        Sign in required
+      </h2>
+      <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">
+        You need to be signed in to use this page.
+      </p>
+      <button
+        onClick={() => setPage('login')}
+        className="py-2 px-4 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700"
+      >
+        Sign in
+      </button>
+    </div>
+  ) : (
+    pages[page]
+  );
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar currentPage={page} onSelect={setPage} />
+      <Sidebar currentPage={page} onSelect={setPage} user={user} onLogout={handleLogout} />
       <div className="flex-1 flex flex-col overflow-hidden">
-        <TopBar theme={theme} onThemeToggle={cycleTheme} />
-        <main className="flex-1 overflow-y-auto p-4 md:p-6">
-          {pages[page]}
-        </main>
+        <TopBar
+          theme={theme}
+          onThemeToggle={cycleTheme}
+          user={user}
+          onLogin={() => setPage('login')}
+          onLogout={handleLogout}
+        />
+        <main className="flex-1 overflow-y-auto p-4 md:p-6">{content}</main>
       </div>
     </div>
   );
