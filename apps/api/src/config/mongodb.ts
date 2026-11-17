@@ -10,14 +10,21 @@ let mongoosePromise: Promise<void> | null = null;
  */
 export async function connectDB(): Promise<void> {
   const env = getEnv();
-  if (!env.MONGODB_URI) {
+  // Read MONGODB_URI directly from process.env as a fallback, since dotenv
+  // with override:true should have populated it from .env before this runs.
+  const uri = env.MONGODB_URI || process.env.MONGODB_URI;
+  if (!uri) {
+    console.error(
+      '[api] MONGODB_URI is not set. Check .env at repo root. NODE_ENV:',
+      env.NODE_ENV,
+    );
     return;
   }
   if (mongoosePromise) {
     return mongoosePromise;
   }
   mongoosePromise = mongoose
-    .connect(env.MONGODB_URI, { dbName: env.MONGODB_DB_NAME })
+    .connect(uri, { dbName: env.MONGODB_DB_NAME })
     .then(() => {
       // eslint-disable-next-line no-console
       console.log(`[api] MongoDB connected: ${env.MONGODB_DB_NAME}`);

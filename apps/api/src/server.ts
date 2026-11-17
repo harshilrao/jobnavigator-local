@@ -1,6 +1,29 @@
 import { config as dotenvConfig } from 'dotenv';
 import { join } from 'node:path';
-dotenvConfig({ path: join(__dirname, '..', '..', '..', '.env') });
+import { fileURLToPath } from 'node:url';
+import { existsSync } from 'node:fs';
+
+/**
+ * Locate the repo-root .env by walking up from this source file.
+ * Works both under `tsx` (dev, ESM) and compiled `node dist/` (build).
+ */
+function findEnvFile(): string {
+  let dir = fileURLToPath(import.meta.url);
+  for (let i = 0; i < 6; i++) {
+    const candidate = join(dir, '.env');
+    if (existsSync(candidate)) return candidate;
+    const parent = join(dir, '..');
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return join(process.cwd(), '.env'); // fallback
+}
+
+dotenvConfig({ path: findEnvFile(), override: true });
+
+// Debug: confirm MONGODB_URI made it into process.env from .env
+// eslint-disable-next-line no-console
+console.log('[api] dotenv MONGODB_URI present:', !!process.env.MONGODB_URI);
 
 import { createApp } from './app';
 import { connectDB, closeDB } from './config/mongodb';
@@ -18,7 +41,7 @@ async function start(): Promise<void> {
     // eslint-disable-next-line no-console
     console.log(`[api] NODE_ENV=${env.NODE_ENV}`);
     // eslint-disable-next-line no-console
-    console.log(`[api] MongoDB: ${env.MONGODB_URI ? 'configured' : 'not_configured (set MONGODB_URI in .env)'}`);
+    console.log(`[api] MongoDB: ${process.env.MONGODB_URI ? 'configured' : 'not_configured (set MONGODB_URI in .env)'}`);
   });
 
   const shutdown = async (signal: string): Promise<void> => {

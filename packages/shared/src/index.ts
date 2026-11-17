@@ -53,3 +53,13 @@ export const demoCheck = (input: unknown): DemoResponse => {
 
 // --- Shared job filter (single source of truth for API + web) ---
 export { JobFilterSchema, type JobFilter, type ParsedJobFilter } from './filter';
+export type {
+  ScrapeSource,
+  ScrapeSourceDescriptor,
+  ScrapeSourceAdapter,
+  SourcePolicies,
+  FetchJobsParams,
+  FetchJobsResult,
+  RawJob,
+  JobDetail,
+} from './filter';

@@ -203,8 +203,9 @@ const jobSchema = new Schema<JobDoc>(
 );
 
 // Dedup index: same source + sourceJobId should not create duplicate jobs
+// for the same owner. Different owners may save the same source job.
 jobSchema.index(
-  { 'provenance.source': 1, 'provenance.sourceJobId': 1 },
+  { 'provenance.source': 1, 'provenance.sourceJobId': 1, ownerId: 1 },
   { unique: true, partialFilterExpression: { 'provenance.sourceJobId': { $exists: true } } }
 );
 
