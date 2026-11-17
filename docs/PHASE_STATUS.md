@@ -135,8 +135,44 @@ TypeScript compilation errors fixed in Phase 2 backend modules (see "Files chang
 - health.test.ts: 2/2 (isDBConnected boolean, createApp)
 - smoke.test.ts: 3/3 (health shape, x-request-id, version constant)
 
-**Database verified:** MongoDB Atlas `jobnavigator_local` connects successfully; collections include `users`, `refreshtokens`, `personas`, `original_documents`, `original_documents.files`, `original_documents.chunks`.
+**Database verified:** MongoDB Atlas `jobnavigator_local` connects successfully; collections include `users`, `refreshtokens`, `personas`, `original_documents`, `original_documents.files`, `original_documents.chunks`, plus Phase 3 collections `jobs`, `companies`, `rawpostings`, `userjobs`, `savedsearches`.
 
 ---
 
-**STOP — Phase 2 gates all pass. Awaiting `APPROVE PHASE 3` (do not start Phase 3).**
+## Phase 3 — Job inventory, manual imports, and one consistent filter — IMPLEMENTED
+
+**Goal:** A job inventory the user can populate manually or via import, filter with one consistent filter, and save/ignore/annotate (before any scraping).
+
+**Backend implemented**
+- `apps/api/src/modules/jobs/job.model.ts` — Mongoose models: `Job`, `Company`, `RawPosting`, `UserJob`, `SavedSearch` with enums (source, remote type, seniority, employment type, description status, quality status, saved state, application stage); dedup partial unique index on `provenance.source` + `provenance.sourceJobId`; list/query indexes.
+- `packages/shared/src/filter.ts` + `index.ts` — single shared `JobFilterSchema` Zod schema used by both API (MongoDB query builder) and web UI (the "one consistent filter").
+- `apps/api/src/modules/jobs/job.service.ts` — `listJobs` (filter + pagination + sort), `getJob`, `addJob` (manual), `importJobs` (CSV/JSON/URL with dedup), `setUserJob` (save/ignore/viewed + note + stage, synced to `Job.savedState`), `getUserJob`; `buildJobQuery` converts the shared filter to MongoDB.
+- `apps/api/src/modules/jobs/job.route.ts` — `GET /api/jobs`, `GET /api/jobs/:id`, `POST /api/jobs`, `POST /api/jobs/import`, `PATCH /api/jobs/:id/save-state`, `PATCH /api/jobs/:id/note`, `PATCH /api/jobs/:id/stage`; all protected by `requireAuth`.
+- Mounted in `apps/api/src/app.ts` at `/api/jobs`.
+
+**Frontend implemented**
+- `apps/web/src/lib/api.ts` — typed job API client (`getJobs`, `getJob`, `addJob`, `importJobs`, `updateUserJob`) sending the shared filter as query params; optional bearer token.
+- `apps/web/src/pages/Jobs.tsx` — Jobs table with the shared filter bar (search, saved state, remote type, seniority, employment type, description, quality, closed, salary range), pagination, saved-state/note/stage actions, job detail modal, and CSV/JSON/URL import dialog.
+
+**Tests added**
+- `apps/api/tests/jobs.test.ts` — 8 tests: manual add, list + filter, detail, CSV import + dedup, save-state toggle, note + stage, 404 unknown, auth required.
+
+**Gates** — executed and passing (with `MONGODB_URI` set against Atlas Free `jobnavigator_local`):
+
+| Gate | Command | Result |
+|------|---------|--------|
+| typecheck | `npm run typecheck` | ✅ Pass (api, web, shared) |
+| lint | `npm run lint` | ✅ Pass (0 errors; only pre-existing non-failing warnings) |
+| test | `npm run test` | ✅ Pass (49 tests: api 42, web 1, shared 4) |
+| build | `npm run build` | ✅ Pass (api tsc, web vite, shared tsc) |
+| smoke | `npm run smoke` | ✅ Pass (api 3, web 1) |
+
+**Test results (against real MongoDB Atlas `jobnavigator_local`):**
+- jobs.test.ts: 8/8 (add, list+filter, detail, import + dedup, save-state, note+stage, 404, auth)
+- All Phase 2 tests still pass (auth 13, documents 7, integration 5, persona 4, health 2, smoke 3).
+
+**Collections (Atlas `jobnavigator_local`):** `users`, `refreshtokens`, `personas`, `original_documents` (+files, +chunks), `jobs`, `companies`, `rawpostings`, `userjobs`, `savedsearches`.
+
+---
+
+**STOP — Phase 3 gates all pass. Awaiting `APPROVE PHASE 4` (scraping / ATS boards) (do not start Phase 4).**

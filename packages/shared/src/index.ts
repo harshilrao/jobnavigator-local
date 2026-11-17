@@ -50,3 +50,6 @@ export const healthCheck = (input: unknown): HealthResponse => {
 export const demoCheck = (input: unknown): DemoResponse => {
   return DemoResponseSchema.parse(input);
 };
+
+// --- Shared job filter (single source of truth for API + web) ---
+export { JobFilterSchema, type JobFilter, type ParsedJobFilter } from './filter';
