@@ -1,0 +1,43 @@
+{
+  "name": "@jobnavigator/api",
+  "private": true,
+  "version": "0.1.0",
+  "description": "JobNavigator Local API — Express + TypeScript + MongoDB",
+  "type": "module",
+  "main": "./dist/src/server.js",
+  "types": "./dist/src/server.d.ts",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/src/server.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --ext .ts",
+    "test": "vitest run",
+    "build": "tsc",
+    "smoke": "vitest run tests/smoke.test.ts"
+  },
+  "dependencies": {
+    "@jobnavigator/shared": "file:../packages/shared",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "jsonwebtoken": "^9.0.2",
+    "mammoth": "^1.9.1",
+    "mongodb": "^6.8.0",
+    "mongoose": "^8.7.0",
+    "multer": "^2.0.0",
+    "pdf-parse": "^1.1.1",
+    "pdf-parser": "^1.0.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.8",
+    "@types/node": "^22.10.0",
+    "pdf-lib": "^1.17.1",
+    "tsx": "^4.17.0",
+    "typescript": "~5.7.2",
+    "vitest": "^2.1.4"
+  }
+}

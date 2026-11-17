@@ -1,0 +1,24 @@
+{
+  "name": "@jobnavigator/shared",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Shared types and Zod schemas for JobNavigator Local",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": { "types": "./src/index.ts", "default": "./src/index.ts" }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --ext .ts",
+    "test": "vitest run",
+    "build": "tsc",
+    "smoke": "node -e \"console.log('shared smoke ok (types-only package; validated by typecheck)')\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "~5.7.2",
+    "vitest": "^2.1.4",
+    "zod": "^3.23.8"
+  }
+}
