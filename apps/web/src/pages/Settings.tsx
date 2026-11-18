@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getAdapters, type AdapterDescriptor } from '@/lib/api';
+import { getAdapters, type AdapterDescriptor, getProviders, type AIProviderView, getProviderHealth } from '@/lib/api';
 
 export interface User {
   id: string;
@@ -27,6 +27,9 @@ export function Settings({
   const [identifiers, setIdentifiers] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [message, setMessage] = useState<string | null>(null);
+  const [providers, setProviders] = useState<AIProviderView[]>([]);
+  const [providersLoading, setProvidersLoading] = useState(false);
+  const [testing, setTesting] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     // Load persisted identifiers from localStorage.
@@ -41,7 +44,46 @@ export function Settings({
     getAdapters().then((data) => setAdapters(data.adapters)).catch(() => {
       /* adapters load failure is non-fatal for configuration */
     });
+    loadProviders();
   }, []);
+
+  async function loadProviders() {
+    setProvidersLoading(true);
+    try {
+      const data = await getProviders();
+      setProviders(data.providers);
+    } catch {
+      setProviders([]);
+    } finally {
+      setProvidersLoading(false);
+    }
+  }
+
+  async function testProvider(providerId: string) {
+    setTesting((prev) => ({ ...prev, [providerId]: true }));
+    setMessage(null);
+    try {
+      const health = await getProviderHealth(providerId as 'ollama' | 'fcc-proxy');
+      setProviders((prev) =>
+        prev.map((p) => (p.id === providerId ? health : p)),
+      );
+      setMessage(
+        health.reachable
+          ? `${health.name} reachable (${health.latencyMs ?? 0}ms)`
+          : `${health.name} unreachable: ${health.error ?? 'unknown error'}`,
+      );
+    } catch (err) {
+      setMessage(
+        `Health check failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setTesting((prev) => {
+        const next = { ...prev };
+        delete next[providerId];
+        return next;
+      });
+    }
+  }
 
   const SOURCE_IDS: string[] = ['greenhouse', 'lever', 'ashby', 'smartrecruiters', 'other'];
 
@@ -108,17 +150,69 @@ export function Settings({
         </div>
       </div>
 
-      {/* AI provider (info only) */}
+      {/* AI provider (Phase 5) */}
       <div className="layer-panel p-4">
-        <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase mb-3">AI provider</h3>
-        <div className="space-y-2">
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Default AI provider: <span className="font-mono text-slate-700 dark:text-slate-200">Ollama (qwen2.5:3b)</span>
-          </p>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Free Claude Code proxy: <span className="font-mono text-amber-500">disabled by default</span>
-          </p>
-        </div>
+        <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase mb-3">
+          AI provider
+        </h3>
+        <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">
+          Local Ollama is the default; the Free Claude Code proxy is optional and disabled by default.
+        </p>
+        {providersLoading ? (
+          <div className="text-sm text-slate-500">Loading providers…</div>
+        ) : (
+          <div className="space-y-3">
+            {providers.map((p) => (
+              <div
+                key={p.id}
+                className="rounded border p-3 flex items-center justify-between bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
+              >
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xs font-medium text-slate-700 dark:text-slate-200">
+                      {p.name}
+                    </span>
+                    {p.enabled ? (
+                      <span className="text-[10px] rounded px-1.5 py-0.5 bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400 border border-green-200 dark:border-green-900/40">
+                        enabled
+                      </span>
+                    ) : (
+                      <span className="text-[10px] rounded px-1.5 py-0.5 bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 border border-amber-200 dark:border-amber-900/40">
+                        disabled
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                    Model: <span className="font-mono">{p.models.join(', ') || '—'}</span>
+                    {p.error ? ` · ${p.error}` : ''}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="text-xs">
+                    <span className={`font-medium ${p.reachable ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+                      {p.reachable ? 'reachable' : 'unreachable'}
+                    </span>
+                    {p.latencyMs !== undefined ? (
+                      <span className="text-slate-500 dark:text-slate-400 ml-1">({p.latencyMs}ms)</span>
+                    ) : null}
+                  </div>
+                  <button
+                    onClick={() => testProvider(p.id)}
+                    disabled={testing[p.id]}
+                    className="text-xs px-2.5 py-1.5 rounded border border-slate-300 dark:border-slate-600 px-2.5 py-1.5 text-sm bg-white dark:bg-slate-800 disabled:bg-slate-200 dark:disabled:bg-slate-800/50 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:cursor-not-allowed"
+                  >
+                    {testing[p.id] ? 'Testing…' : 'Test'}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {message && (
+          <div className="p-2 rounded text-sm text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/20 border border-green-100 dark:border-green-900/30">
+            {message}
+          </div>
+        )}
       </div>
 
       {/* Scrape source configuration */}

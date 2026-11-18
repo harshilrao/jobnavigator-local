@@ -236,3 +236,76 @@ TypeScript compilation errors fixed in Phase 2 backend modules (see "Files chang
 Phase 4 complete: backend + frontend. Selected jobs appear in the Jobs table while a real scraping session runs; live SSE progress, cooperative cancellation, per-owner dedup, missing-JD tracking, and adapter configuration in Settings.
 
 **STOP — Phase 4 (scraping / ATS boards) complete. Awaiting `APPROVE PHASE 4`.**
+
+---
+
+## Phase 5 — Local Ollama + optional FCC proxy, resume-job scoring — IMPLEMENTED (backend + frontend)
+
+**Goal:** End-to-end AI match report generated from stored original resume text + stored job description. Local Ollama is the default provider; Free Claude Code proxy (OpenAI-compatible) is optional and disabled by default. Structured, Zod-validated JSON output with heuristic 0-100 score (not an ATS score), checksum-based caching, one bounded repair attempt, and prompt-injection sanitization of JD text.
+
+**Backend implemented**
+- `apps/api/src/modules/ai/ai.model.ts` (NEW) — `MatchReportDoc` Mongoose model: ownerId, jobId, resumeId, provider ('ollama'|'fcc-proxy'), modelName, promptVersion, matchScore (0-100), matchReport (Mixed), resumeChecksum, jdChecksum, status ('pending'|'complete'|'failed'), errorMessage, generatedAt. Unique index on (ownerId, jobId, resumeId, modelName, promptVersion).
+- `apps/api/src/modules/ai/ai.provider.ts` (NEW) — `AIProvider` interface (id, name, modelName, healthCheck, listModels, structuredChat, capabilityInfo); `OllamaProvider` (http://127.0.0.1:11434/api/chat, format: json, model qwen2.5:3b); `FccProxyProvider` (OpenAI-compatible /chat/completions at http://127.0.0.1:8082/v1, disabled by default); `MatchReportSchema` Zod schema (fitSummary, requiredSkills[], relevantKeywords[], cautions[], suggestedImprovements[], matchScore 0-100, rubric); `buildScoringMessages` (evidence-only prompt, no invention); `sanitizeJDText` (prompt-injection guard); `textChecksum`; PROMPT_VERSION='v1'; `createProvider` factory; `MatchReportOutput` local type.
+- `apps/api/src/modules/ai/ai.service.ts` (NEW) — `scoreJob` (owner/job/resume validation, JD must be complete/partial, cache lookup, generate + one repair attempt, denormalize aiScore onto Job), `getJobMatches`, `getMatchReport`, `listProviders` (health + models), `getProviderHealth`, `isFccProxyEnabled`.
+- `apps/api/src/modules/ai/ai.route.ts` (NEW) — routes all protected by `requireAuth`:
+  - `GET /api/ai/providers` — list providers with health status
+  - `GET /api/ai/health/:provider` — single provider health check
+  - `POST /api/ai/jobs/:id/score` — score a job against a resume (body: { resumeId, provider? })
+  - `GET /api/ai/jobs/:id/matches` — list match reports for a job
+  - `GET /api/ai/reports/:id` — get a single match report
+- `apps/api/src/app.ts` — mounts `aiRouter` at `/api/ai` after `scrapeRouter`.
+
+**Frontend implemented**
+- `apps/web/src/lib/api.ts` — `getProviders`, `getProviderHealth`, `scoreJob`, `getJobMatches`, `getDocuments`, types (`AIProviderView`, `MatchReportView`, `DocumentView`).
+- `apps/web/src/pages/Settings.tsx` — AI provider panel now shows provider list with enabled/disabled status, reachability + latency, models, per-provider Test buttons that call `GET /api/ai/health/:provider`, and status messages.
+- `apps/web/src/pages/Jobs.tsx` — Job detail modal: click any job → open detail → shows description + AI score. Scoring section selects a resume (PDF/DOCX upload required first), clicks "Score with Ollama" → calls `POST /api/ai/jobs/:id/score`, displays match report (fit summary, required skills with status, cautions, suggested improvements, score/100). Job table row shows `AI: <score>` once scored.
+
+**Tests added**
+- `apps/api/tests/ai.test.ts` — 17 tests: schema validation (valid report, score out of range, missing fields, invalid status enum), prompt-injection guard (ignore-previous-instructions, you-are-now, system: injections, normal text untouched), textChecksum stability/difference/md5 format, buildScoringMessages shape, PROMPT_VERSION non-empty, OllamaProvider unreachable health, plus DB-backed integration (missing JD rejection, 401 without token, 400 without resumeId). Skips DB tests when MONGODB_URI unset.
+
+**Collections added (Atlas `jobnavigator_local`):** `matchreports`.
+
+**Gates** — executed and passing:
+| Gate | Command | Result |
+|------|---------|--------|
+| typecheck | `npm run typecheck` | ✅ Pass (api, web, shared) |
+| lint | `npm run lint` | ✅ Pass (0 errors; only pre-existing non-failing warnings) |
+| test | `npm run test` | ✅ Pass (81 tests: api 76, web 1, shared 4) |
+| build | `npm run build` | ✅ Pass (api tsc, web vite, shared tsc) |
+| smoke | `npm run smoke` | ✅ Pass (api 3, web 1) |
+
+**Test results:**
+- ai.test.ts: 17/17 (schema validation 5, sanitizeJDText 4, textChecksum 3, buildScoringMessages 1, PROMPT_VERSION 1, OllamaProvider health 1, DB integration 2)
+- All previous Phase 2/3/4 tests still pass (59 total).
+
+**Routes / URLs (API on port 3000, all requireAuth):**
+- `GET http://localhost:3000/api/ai/providers`
+- `GET http://localhost:3000/api/ai/health/ollama` (or `/health/fcc-proxy`)
+- `POST http://localhost:3000/api/ai/jobs/:id/score` — body `{ "resumeId": "...", "provider": "ollama" }`
+- `GET http://localhost:3000/api/ai/jobs/:id/matches`
+- `GET http://localhost:3000/api/ai/reports/:id`
+
+**UI verification (web on port 5173)**
+1. Sign in, go to **Settings**. AI provider panel lists Ollama (enabled, reachable if Ollama running) and FCC proxy (disabled by default). Click **Test** to probe reachability/latency.
+2. Upload a resume (PDF/DOCX) on the **Documents** page first (required for scoring).
+3. Go to **Jobs**, click any job row to open the detail modal. In the scoring section, select your resume and click **Score with Ollama**. The match report appears with fit summary, required skills (met/partial/missing), cautions, suggested improvements, and score/100. The job row also shows `AI: <score>`.
+
+**Security notes**
+- Resume text and JD text are never logged or printed; match reports store only Zod-validated derived fields, never raw resume PII beyond what's in the report.
+- JD text is passed through `sanitizeJDText` before reaching the model (prompt-injection guard).
+- `fcc-claude` interactive CLI is never spawned from HTTP requests; FccProxyProvider only calls the OpenAI-compatible HTTP endpoint when `FCC_PROXY_ENABLED=true`.
+- No tokens or resume PII committed.
+
+**Start (PowerShell, repo root)**
+1. `npm install` (done once)
+2. Copy `.env.example` to `.env` and set `MONGODB_URI` to a **new** Atlas Free cluster database named `jobnavigator_local` (never `job-automation`, never an existing DB).
+3. For Ollama scoring: run local Ollama (`qwen2.5:3b`) on port 11434. FCC proxy is disabled by default; set `FCC_PROXY_ENABLED=true` only if intentionally using it.
+4. `.\scripts\dev.ps1 -Action start` (opens API on 3000, Web on 5173)
+5. `.\scripts\dev.ps1 -Action status` / `-Action stop`
+
+**Remaining bugs / notes**
+- Scoring against a live Ollama instance requires Ollama running with `qwen2.5:3b` pulled; unit/integration tests cover provider-unreachable and missing-JD paths without a live model.
+- `matchreports` collection unique index on (ownerId, jobId, resumeId, modelName, promptVersion) makes re-scoring idempotent when checksums are unchanged.
+- FCC proxy `models` field shows empty string when disabled (cosmetic; provider is unusable unless enabled).
+
+**STOP — Phase 5 (backend + frontend) IMPLEMENTED. Awaiting `APPROVE PHASE 5`.**

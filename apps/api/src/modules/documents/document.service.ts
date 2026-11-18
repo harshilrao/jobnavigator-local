@@ -5,7 +5,17 @@ import { GridFSBucket, type Db } from 'mongodb';
 import mongoose from 'mongoose';
 import { createHash } from 'node:crypto';
 import { OriginalDocument, type OriginalDocumentDoc, type DocumentType, type TextExtractionStatus } from './document.model';
-import { getEnv } from '../../config/env';
+
+/** Truncate text for logging to avoid flooding console with full resume content. */
+function truncateForLog(text: string, maxLen = 200): string {
+  if (text.length <= maxLen) return text;
+  return text.slice(0, maxLen) + '…';
+}
+
+/** Count words in text (split by whitespace, filter empty). */
+function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
 
 /**
  * pdf-parse and mammoth are CommonJS / dual modules. Use createRequire so ESM
@@ -56,9 +66,10 @@ export async function uploadDocument(
   file: { originalname: string; mimetype: string; size: number; buffer: Buffer },
   documentType: DocumentType
 ): Promise<UploadedDocument> {
-  const env = getEnv();
   const checksum = checksumBuffer(file.buffer);
   const bucket = getBucket();
+
+  console.log(`[DOCUMENTS] Upload: owner=${ownerId} file="${file.originalname}" type=${documentType} size=${file.size} mime=${file.mimetype} checksum=${checksum}`);
 
   // Upload original bytes to GridFS.
   const uploadStream = bucket.openUploadStream(file.originalname, {
@@ -103,6 +114,7 @@ export async function uploadDocument(
     existing.extractedText = undefined;
     existing.deletedAt = undefined;
     document = await existing.save();
+    console.log(`[DOCUMENTS] Versioned: docId=${document._id} version=${document.version} (archived previous)`);
   } else {
     document = await OriginalDocument.create({
       ownerId: new mongoose.Types.ObjectId(ownerId),
@@ -117,6 +129,7 @@ export async function uploadDocument(
       textExtractionStatus: 'pending',
       deletedAt: undefined,
     });
+    console.log(`[DOCUMENTS] Created: docId=${document._id} version=1`);
   }
 
   // Text extraction (never crashes the upload; status reflects outcome).
@@ -127,17 +140,23 @@ export async function uploadDocument(
     if (extracted && extracted.length > 0) {
       extractedText = extracted;
       status = 'complete';
+      const words = countWords(extracted);
+      console.log(`[DOCUMENTS] Extraction SUCCESS: docId=${document._id} chars=${extracted.length} words=${words} preview="${truncateForLog(extracted, 150)}"`);
     } else {
       status = 'missing';
+      console.log(`[DOCUMENTS] Extraction EMPTY: docId=${document._id} no text extracted`);
     }
-  } catch {
+  } catch (err) {
     status = 'failed';
+    console.error(`[DOCUMENTS] Extraction FAILED: docId=${document._id} error=${err instanceof Error ? err.message : String(err)}`);
   }
 
   document.textExtractionStatus = status;
   document.extractedText = extractedText;
   await document.save();
 
+  const words = extractedText ? countWords(extractedText) : 0;
+  console.log(`[DOCUMENTS] Finalized: docId=${document._id} status=${status} extractedTextLen=${extractedText?.length ?? 0} words=${words}`);
   return { document, extractedText, textExtractionStatus: status };
 }
 
@@ -145,17 +164,23 @@ export async function uploadDocument(
  * Extract text from PDF or DOCX. Returns empty string when nothing extractable.
  */
 async function extractText(buffer: Uint8Array, mimeType: string): Promise<string> {
+  console.log(`[DOCUMENTS] extractText start: mime=${mimeType} bytes=${buffer.length}`);
   if (mimeType === 'application/pdf') {
     const result = await pdfParse(buffer);
-    return result.text ?? '';
+    const text = result.text ?? '';
+    console.log(`[DOCUMENTS] extractText PDF done: chars=${text.length}`);
+    return text;
   }
   if (
     mimeType ===
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
   ) {
     const result = await mammoth.extract({ buffer: Buffer.from(buffer) });
-    return result.value ?? '';
+    const text = result.value ?? '';
+    console.log(`[DOCUMENTS] extractText DOCX done: chars=${text.length}`);
+    return text;
   }
+  console.log(`[DOCUMENTS] extractText unsupported mime: ${mimeType}`);
   return '';
 }
 
