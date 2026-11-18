@@ -114,7 +114,9 @@ export function ResumeTailorPage() {
   };
 
   const handleGenerate = async () => {
+    console.log('[ResumeTailor] handleGenerate called', { resumeId: state.resumeId, templateId: state.templateId, matchReportId: state.matchReportId, jobId });
     if (!state.resumeId || !state.templateId) {
+      console.log('[ResumeTailor] Missing resumeId or templateId');
       setState(prev => ({ ...prev, error: 'Please select a resume and template' }));
       return;
     }
@@ -122,6 +124,7 @@ export function ResumeTailorPage() {
     setState(prev => ({ ...prev, loading: true, error: null }));
 
     try {
+      console.log('[ResumeTailor] Calling tailorResume API...');
       const response = await tailorResume({
         originalResumeId: state.resumeId,
         jobId: jobId!,
@@ -129,6 +132,7 @@ export function ResumeTailorPage() {
         templateId: state.templateId,
         instructions: state.instructions,
       });
+      console.log('[ResumeTailor] tailorResume response:', response);
 
       setState(prev => ({
         ...prev,
@@ -138,7 +142,9 @@ export function ResumeTailorPage() {
         acceptedChanges: new Set(),
         rejectedChanges: new Set(),
       }));
+      console.log('[ResumeTailor] State updated to preview step');
     } catch (err) {
+      console.error('[ResumeTailor] Error:', err);
       setState(prev => ({
         ...prev,
         loading: false,

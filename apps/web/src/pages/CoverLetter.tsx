@@ -136,7 +136,9 @@ export function CoverLetterPage() {
   };
 
   const handleGenerate = async () => {
+    console.log('[CoverLetter] handleGenerate called', { resumeId: state.resumeId, templateId: state.templateId, matchReportId: state.matchReportId, jobId, tone: state.tone, length: state.length });
     if (!state.resumeId || !state.templateId) {
+      console.log('[CoverLetter] Missing resumeId or templateId');
       setState(prev => ({ ...prev, error: 'Please select a resume and template' }));
       return;
     }
@@ -144,6 +146,7 @@ export function CoverLetterPage() {
     setState(prev => ({ ...prev, loading: true, error: null }));
 
     try {
+      console.log('[CoverLetter] Calling generateCoverLetter API...');
       const response = await generateCoverLetter({
         originalResumeId: state.resumeId,
         jobId: jobId!,
@@ -156,6 +159,7 @@ export function CoverLetterPage() {
         companyAddress: state.companyAddress || undefined,
         instructions: state.instructions || undefined,
       });
+      console.log('[CoverLetter] generateCoverLetter response:', response);
 
       setState(prev => ({
         ...prev,
@@ -163,7 +167,9 @@ export function CoverLetterPage() {
         coverLetterResponse: response,
         loading: false,
       }));
+      console.log('[CoverLetter] State updated to preview step');
     } catch (err) {
+      console.error('[CoverLetter] Error:', err);
       setState(prev => ({
         ...prev,
         loading: false,

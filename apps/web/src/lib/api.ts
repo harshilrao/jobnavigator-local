@@ -70,17 +70,21 @@ async function fetchJson<T>(
   if (effectiveToken) {
     headers.Authorization = `Bearer ${effectiveToken}`;
   }
+  console.log('[API] fetchJson', { path, method: init?.method || 'GET', hasToken: !!effectiveToken });
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
     headers,
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
+    console.error('[API] fetchJson error', { path, status: res.status, statusText: res.statusText, response: text });
     throw new Error(
       `API ${res.status} ${res.statusText}${text ? ': ' + text : ''}`,
     );
   }
-  return (await res.json()) as T;
+  const data = (await res.json()) as T;
+  console.log('[API] fetchJson success', { path, data });
+  return data;
 }
 
 export interface HealthResponse {
@@ -945,6 +949,7 @@ export async function deleteCoverLetterTemplate(id: string): Promise<{ ok: boole
 }
 
 export async function tailorResume(input: TailorResumeInput): Promise<TailoredResumeResponse> {
+  console.log('[API] tailorResume called', { input, token: getAuthToken() ? 'present' : 'MISSING' });
   return fetchJson<TailoredResumeResponse>('/api/resumes/tailor', {
     method: 'POST',
     body: JSON.stringify(input),
@@ -952,6 +957,7 @@ export async function tailorResume(input: TailorResumeInput): Promise<TailoredRe
 }
 
 export async function generateCoverLetter(input: GenerateCoverLetterInput): Promise<GeneratedCoverLetterResponse> {
+  console.log('[API] generateCoverLetter called', { input, token: getAuthToken() ? 'present' : 'MISSING' });
   return fetchJson<GeneratedCoverLetterResponse>('/api/resumes/cover-letter', {
     method: 'POST',
     body: JSON.stringify(input),
