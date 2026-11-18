@@ -12,6 +12,11 @@ function truncateForLog(text: string, maxLen = 200): string {
   return text.slice(0, maxLen) + '…';
 }
 
+/** Count words in text (split by whitespace, filter empty). */
+function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
 /**
  * pdf-parse and mammoth are CommonJS / dual modules. Use createRequire so ESM
  * resolution never throws "pdfParse is not a function" (the known failure mode
@@ -135,7 +140,8 @@ export async function uploadDocument(
     if (extracted && extracted.length > 0) {
       extractedText = extracted;
       status = 'complete';
-      console.log(`[DOCUMENTS] Extraction SUCCESS: docId=${document._id} chars=${extracted.length} preview="${truncateForLog(extracted, 150)}"`);
+      const words = countWords(extracted);
+      console.log(`[DOCUMENTS] Extraction SUCCESS: docId=${document._id} chars=${extracted.length} words=${words} preview="${truncateForLog(extracted, 150)}"`);
     } else {
       status = 'missing';
       console.log(`[DOCUMENTS] Extraction EMPTY: docId=${document._id} no text extracted`);
@@ -149,7 +155,8 @@ export async function uploadDocument(
   document.extractedText = extractedText;
   await document.save();
 
-  console.log(`[DOCUMENTS] Finalized: docId=${document._id} status=${status} extractedTextLen=${extractedText?.length ?? 0}`);
+  const words = extractedText ? countWords(extractedText) : 0;
+  console.log(`[DOCUMENTS] Finalized: docId=${document._id} status=${status} extractedTextLen=${extractedText?.length ?? 0} words=${words}`);
   return { document, extractedText, textExtractionStatus: status };
 }
 
