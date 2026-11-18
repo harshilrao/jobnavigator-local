@@ -8,7 +8,13 @@ import { Documents } from '@/pages/Documents';
 import { Settings } from '@/pages/Settings';
 import { Login } from '@/pages/Login';
 import { Scrape } from '@/pages/Scrape';
-import { getCurrentUser } from '@/lib/api';
+import {
+  getCurrentUser,
+  getAuthToken,
+  setAuthToken,
+  setCurrentUser,
+  logout,
+} from '@/lib/api';
 
 export type Theme = 'light' | 'dark' | 'system';
 export type Page =
@@ -57,9 +63,17 @@ export function App() {
     setPage('dashboard');
   }, []);
 
-  const handleLogout = useCallback(() => {
-    setUser(null);
-    setPage('dashboard');
+  const handleLogout = useCallback(async () => {
+    try {
+      await logout(getAuthToken() ?? undefined);
+    } catch {
+      /* ignore API errors on logout — clear local state regardless */
+    } finally {
+      setAuthToken(null);
+      setCurrentUser(null);
+      setUser(null);
+      setPage('dashboard');
+    }
   }, []);
 
   const requiresAuth: Page[] = ['jobs', 'searches', 'documents', 'settings', 'scrape'];

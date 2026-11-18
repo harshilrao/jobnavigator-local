@@ -76,3 +76,12 @@ start().catch((err: unknown) => {
   console.error('[api] failed to start:', err);
   process.exit(1);
 });
+
+process.on('unhandledRejection', (reason: unknown) => {
+  // eslint-disable-next-line no-console
+  console.error('[api] UNHANDLED REJECTION:', reason);
+});
+process.on('uncaughtException', (err: Error) => {
+  // eslint-disable-next-line no-console
+  console.error('[api] UNCAUGHT EXCEPTION:', err);
+});

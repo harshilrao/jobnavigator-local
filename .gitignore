@@ -10,6 +10,9 @@ dist/
 build/
 *.tsbuildinfo
 
+# Typecheck / command output logs
+typecheck-api.txt
+
 # Environment and secrets
 .env
 .env.local

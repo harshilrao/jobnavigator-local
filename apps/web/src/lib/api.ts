@@ -295,6 +295,106 @@ export async function updateUserJob(
   }, token);
 }
 
+// ----- Documents -----
+
+export interface DocumentView {
+  id: string;
+  ownerId: string;
+  originalFilename: string;
+  mimeType: string;
+  size: number;
+  checksum: string;
+  documentType: 'resume' | 'cover-letter';
+  textExtractionStatus: 'missing' | 'pending' | 'complete' | 'partial' | 'failed';
+  extractedText?: string;
+  createdAt: string;
+}
+
+// Backend response shape (from Mongoose)
+interface RawDocument {
+  _id: string;
+  ownerId: string;
+  originalFilename: string;
+  mimeType: string;
+  size: number;
+  checksum: string;
+  documentType: 'resume' | 'cover-letter';
+  textExtractionStatus: 'missing' | 'pending' | 'complete' | 'partial' | 'failed';
+  extractedText?: string;
+  createdAt: string;
+  updatedAt: string;
+  gridFsFileId: string;
+  version: number;
+  previousVersions: unknown[];
+  __v: number;
+}
+
+export interface UploadDocumentResponse {
+  id: string;
+  originalFilename: string;
+  textExtractionStatus: string;
+  extractedText?: string;
+}
+
+function transformDoc(raw: RawDocument): DocumentView {
+  return {
+    id: raw._id,
+    ownerId: raw.ownerId,
+    originalFilename: raw.originalFilename,
+    mimeType: raw.mimeType,
+    size: raw.size,
+    checksum: raw.checksum,
+    documentType: raw.documentType,
+    textExtractionStatus: raw.textExtractionStatus,
+    extractedText: raw.extractedText,
+    createdAt: raw.createdAt,
+  };
+}
+
+export async function getDocuments(): Promise<DocumentView[]> {
+  const raw = await fetchJson<RawDocument[]>('/api/documents', undefined, getAuthToken());
+  return raw.map(transformDoc);
+}
+
+export async function uploadDocument(
+  file: File,
+  documentType: 'resume' | 'cover-letter',
+): Promise<UploadDocumentResponse> {
+  const form = new FormData();
+  form.append('file', file);
+  const token = getAuthToken();
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}/api/documents/upload?type=${documentType}`, {
+    method: 'POST',
+    headers,
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`API ${res.status} ${res.statusText}${text ? ': ' + text : ''}`);
+  }
+  return (await res.json()) as UploadDocumentResponse;
+}
+
+export async function deleteDocument(id: string): Promise<{ ok: boolean }> {
+  return fetchJson<{ ok: boolean }>(`/api/documents/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  }, getAuthToken());
+}
+
+export function getDocumentPreviewUrl(id: string): string {
+  const token = getAuthToken();
+  const base = `${API_BASE}/api/documents/${encodeURIComponent(id)}/preview`;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
+
+export function getDocumentDownloadUrl(id: string): string {
+  const token = getAuthToken();
+  const base = `${API_BASE}/api/documents/${encodeURIComponent(id)}/download`;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
+
 // ----- Auth -----
 
 export interface Credentials {
@@ -537,6 +637,76 @@ export function scrapeEventStream(
       controller.abort();
     },
   };
+}
+
+// ----- AI / Phase 5 -----
+
+export type AIProviderId = 'ollama' | 'fcc-proxy';
+
+export interface AIProviderView {
+  id: AIProviderId;
+  name: string;
+  enabled: boolean;
+  reachable: boolean;
+  latencyMs?: number;
+  models: string[];
+  error?: string;
+}
+
+export async function getProviders(): Promise<{ providers: AIProviderView[] }> {
+  return fetchJson<{ providers: AIProviderView[] }>('/api/ai/providers', undefined, getAuthToken());
+}
+
+export async function getProviderHealth(
+  providerId: AIProviderId,
+): Promise<AIProviderView> {
+  return fetchJson<AIProviderView>(
+    `/api/ai/health/${encodeURIComponent(providerId)}`,
+    undefined,
+    getAuthToken(),
+  );
+}
+
+export interface ScoreJobRequest {
+  resumeId: string;
+  provider?: AIProviderId;
+}
+
+export interface MatchReportView {
+  id: string;
+  jobId: string;
+  resumeId: string;
+  status: 'pending' | 'complete' | 'failed';
+  matchScore: number;
+  matchReport: Record<string, unknown>;
+  provider: AIProviderId;
+  model: string;
+  generatedAt: string;
+  errorMessage?: string;
+}
+
+export async function scoreJob(
+  jobId: string,
+  body: ScoreJobRequest,
+): Promise<MatchReportView> {
+  return fetchJson<MatchReportView>(
+    `/api/ai/jobs/${encodeURIComponent(jobId)}/score`,
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+    getAuthToken(),
+  );
+}
+
+export async function getJobMatches(
+  jobId: string,
+): Promise<{ matches: MatchReportView[] }> {
+  return fetchJson<{ matches: MatchReportView[] }>(
+    `/api/ai/jobs/${encodeURIComponent(jobId)}/matches`,
+    undefined,
+    getAuthToken(),
+  );
 }
 
 export { API_BASE };
