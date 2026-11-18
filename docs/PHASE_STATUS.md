@@ -312,12 +312,31 @@ Phase 4 complete: backend + frontend. Selected jobs appear in the Jobs table whi
 
 ---
 
-## Phase 6 — Planned
+## Phase 6 — Evidence-grounded resume tailoring and cover letters — IN PROGRESS
 
-**Goal:** [To be defined - e.g., Application tracking, Cover letter generation, Email notifications, etc.]
+**Goal:** Users can review and export job-specific drafts while their original uploaded documents remain untouched.
 
-**Planned items:**
-- [ ] TBD
+**Implementation plan (from BUILD_PLAN.md):**
+1. Add Tailor Resume and Generate Cover Letter controls on Job Detail, starting from a selected immutable original resume and its match report. Never rewrite the original stored file.
+2. Build a structured canonical resume JSON backed by confirmed extracted/user-approved facts. AI may rephrase or reorder truthful details, emphasize supported keywords and propose edits, but never invent facts. Unknown fields require user input rather than AI guesses.
+3. Editable sections, change-highlighting and side-by-side original vs proposed draft with Accept/Reject per change. Preserve a revision history; show clear "not in my base resume" warnings.
+4. Resume templates: start with one accessible, ATS-friendly, single-column HTML/CSS template and one cover-letter template; use deterministic Playwright HTML-to-PDF with selectable margins, page size, typography and no icons/tables in ATS core content. Also provide DOCX export if reliably implemented and tested; don't falsely claim a PDF preserves arbitrary input formatting exactly.
+5. For closer original-design matching, allow the user to upload an editable DOCX or save a user-approved template profile with font, size, line spacing, margins, headings; visual preview and PDF output diff checks. State when exact fidelity is not possible from source PDF alone.
+6. Add letter settings: tone, length, address/salutation and source facts. Letters mention the actual role, employer and supported accomplishments; do not invent a hiring manager.
+7. Keep PDFs in GridFS, metadata in MongoDB, stream secure preview/download; exports should survive restart. Generate only on explicit user action by default, not for every scraped job.
+8. Tests cover multiple-page resumes, long sections, fonts, PDF text extraction, authenticated downloads, accurate facts, template continuity and failed Ollama calls.
+
+**Backend modules to create:**
+- `apps/api/src/modules/resumes/` — ResumeTemplate, GeneratedDocument models and services
+- `apps/api/src/modules/resumes/resume.model.ts` — Mongoose models for ResumeTemplate, GeneratedDocument
+- `apps/api/src/modules/resumes/resume.service.ts` — Tailor resume, generate cover letter, template management, PDF/DOCX export via Playwright
+- `apps/api/src/modules/resumes/resume.route.ts` — Protected routes for tailoring, preview, export
+- `apps/api/src/modules/ai/ai.provider.ts` — Add structuredChat methods for resume tailoring and cover letter generation
+
+**Frontend modules to create:**
+- `apps/web/src/pages/ResumeTailor.tsx` — Job detail integration, side-by-side diff, accept/reject changes
+- `apps/web/src/pages/CoverLetter.tsx` — Letter settings, preview, export
+- `apps/web/src/components/` — Diff viewer, template selector, export buttons
 
 **Gates** — to be executed after implementation:
 
@@ -329,4 +348,4 @@ Phase 4 complete: backend + frontend. Selected jobs appear in the Jobs table whi
 | build | `npm run build` | ⏳ Pending |
 | smoke | `npm run smoke` | ⏳ Pending |
 
-**STOP — Phase 6 not started. Awaiting `APPROVE PHASE 6` (after implementation).**
+**STOP — Phase 6 in progress. Awaiting implementation completion.**

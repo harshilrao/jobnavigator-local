@@ -1,7 +1,7 @@
 import { type RequestHandler, type Request } from 'express';
 import { verifyAccessToken } from './auth.service';
 
-export interface AuthenticatedRequest {
+export interface AuthenticatedRequest extends Request {
   user?: { id: string; email: string; role: string };
 }
 

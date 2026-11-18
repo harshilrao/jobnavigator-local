@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   getJobs,
   updateUserJob,
@@ -39,6 +40,7 @@ const REFRESH_INTERVAL_MS = 4000;
 
 export function Jobs() {
   const user = getCurrentUser();
+  const navigate = useNavigate();
   const [jobs, setJobs] = useState<JobView[]>([]);
   const [total, setTotal] = useState(0);
   const [filter, setFilter] = useState<JobFilter>({ page: 1, limit: 20, sort: 'createdAt', order: 'desc' });
@@ -544,6 +546,24 @@ export function Jobs() {
 
                         <div className="mt-2 text-[10px] text-slate-500 dark:text-slate-400">
                           Generated {new Date(matches[0].generatedAt).toLocaleString()} · status: {matches[0].status}
+                        </div>
+
+                        {/* Phase 6: Tailor Resume & Cover Letter buttons */}
+                        <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              onClick={() => navigate(`/jobs/${selectedJob.id}/tailor?resume=${selectedResumeId}&match=${matches[0].id}`)}
+                              className="px-3 py-1.5 rounded text-xs font-semibold bg-purple-600 text-white hover:bg-purple-700 transition"
+                            >
+                              Tailor Resume
+                            </button>
+                            <button
+                              onClick={() => navigate(`/jobs/${selectedJob.id}/cover-letter?resume=${selectedResumeId}&match=${matches[0].id}`)}
+                              className="px-3 py-1.5 rounded text-xs font-semibold bg-pink-600 text-white hover:bg-pink-700 transition"
+                            >
+                              Generate Cover Letter
+                            </button>
+                          </div>
                         </div>
                       </div>
                     )}

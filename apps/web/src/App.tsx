@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Sidebar } from '@/layout/Sidebar';
 import { TopBar } from '@/layout/TopBar';
 import { Dashboard } from '@/pages/Dashboard';
@@ -8,6 +9,8 @@ import { Documents } from '@/pages/Documents';
 import { Settings } from '@/pages/Settings';
 import { Login } from '@/pages/Login';
 import { Scrape } from '@/pages/Scrape';
+import { ResumeTailorPage } from '@/pages/ResumeTailor';
+import { CoverLetterPage } from '@/pages/CoverLetter';
 import {
   getCurrentUser,
   getAuthToken,
@@ -37,9 +40,13 @@ function resolveTheme(theme: Theme): 'light' | 'dark' {
   return theme;
 }
 
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const user = getCurrentUser();
+  return user ? <>{children}</> : <Navigate to="/login" replace />;
+}
+
 export function App() {
   const [theme, setTheme] = useState<Theme>('system');
-  const [page, setPage] = useState<Page>('dashboard');
   const [user, setUser] = useState(() => getCurrentUser());
 
   useEffect(() => {
@@ -58,9 +65,8 @@ export function App() {
     setTheme((t) => (t === 'light' ? 'dark' : t === 'dark' ? 'system' : 'light'));
   }, []);
 
-  const handleLogin = useCallback((u: { id: string; email: string }) => {
-    setUser(u);
-    setPage('dashboard');
+  const handleLogin = useCallback(() => {
+    setUser(getCurrentUser()!);
   }, []);
 
   const handleLogout = useCallback(async () => {
@@ -72,55 +78,92 @@ export function App() {
       setAuthToken(null);
       setCurrentUser(null);
       setUser(null);
-      setPage('dashboard');
     }
   }, []);
 
-  const requiresAuth: Page[] = ['jobs', 'searches', 'documents', 'settings', 'scrape'];
-
-  const pages: Record<Page, React.ReactNode> = {
-    dashboard: <Dashboard />,
-    jobs: <Jobs />,
-    searches: <Searches />,
-    documents: <Documents />,
-    settings: <Settings theme={theme} setTheme={setTheme} user={user} />,
-    login: <Login onAuthenticated={handleLogin} />,
-    scrape: <Scrape />,
-  };
-
-  const content = requiresAuth.includes(page) && !user ? (
-    <div className="layer-panel p-6 max-w-md mx-auto">
-      <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-4">
-        Sign in required
-      </h2>
-      <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">
-        You need to be signed in to use this page.
-      </p>
-      <button
-        onClick={() => setPage('login')}
-        className="py-2 px-4 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700"
-      >
-        Sign in
-      </button>
-    </div>
-  ) : (
-    pages[page]
-  );
-
   return (
-    <div className="flex h-screen overflow-hidden">
-      <Sidebar currentPage={page} onSelect={setPage} user={user} onLogout={handleLogout} />
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <TopBar
-          theme={theme}
-          onThemeToggle={cycleTheme}
-          user={user}
-          onLogin={() => setPage('login')}
-          onLogout={handleLogout}
-        />
-        <main className="flex-1 overflow-y-auto p-4 md:p-6">{content}</main>
+    <BrowserRouter>
+      <div className="flex h-screen overflow-hidden">
+        <Sidebar user={user} onLogout={handleLogout} />
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <TopBar
+            theme={theme}
+            onThemeToggle={cycleTheme}
+            user={user}
+          />
+          <main className="flex-1 overflow-y-auto p-4 md:p-6">
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route
+                path="/"
+                element={
+                  <ProtectedRoute>
+                    <Dashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/jobs"
+                element={
+                  <ProtectedRoute>
+                    <Jobs />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/jobs/:jobId/tailor"
+                element={
+                  <ProtectedRoute>
+                    <ResumeTailorPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/jobs/:jobId/cover-letter"
+                element={
+                  <ProtectedRoute>
+                    <CoverLetterPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/searches"
+                element={
+                  <ProtectedRoute>
+                    <Searches />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/documents"
+                element={
+                  <ProtectedRoute>
+                    <Documents />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/settings"
+                element={
+                  <ProtectedRoute>
+                    <Settings theme={theme} setTheme={setTheme} user={user} />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/scrape"
+                element={
+                  <ProtectedRoute>
+                    <Scrape />
+                  </ProtectedRoute>
+                }
+              />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </main>
+        </div>
       </div>
-    </div>
+    </BrowserRouter>
   );
 }
 

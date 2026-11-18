@@ -709,4 +709,298 @@ export async function getJobMatches(
   );
 }
 
+// ----- Resumes / Phase 6 -----
+
+export interface ResumeTemplateView {
+  id: string;
+  ownerId: string;
+  name: string;
+  description?: string;
+  isDefault: boolean;
+  isSystem: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CoverLetterTemplateView {
+  id: string;
+  ownerId: string;
+  name: string;
+  description?: string;
+  isDefault: boolean;
+  isSystem: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CanonicalResume {
+  basics: {
+    name: string;
+    email?: string;
+    phone?: string;
+    location?: string;
+    linkedin?: string;
+    github?: string;
+    website?: string;
+    summary?: string;
+  };
+  skills: Array<{
+    name: string;
+    category?: string;
+    level?: 'beginner' | 'intermediate' | 'advanced' | 'expert';
+    evidence?: string;
+  }>;
+  experience: Array<{
+    company: string;
+    title: string;
+    location?: string;
+    startDate: string;
+    endDate?: string;
+    current: boolean;
+    description: string;
+    highlights: string[];
+    technologies: string[];
+  }>;
+  education: Array<{
+    institution: string;
+    degree: string;
+    fieldOfStudy?: string;
+    location?: string;
+    startDate?: string;
+    endDate?: string;
+    gpa?: string;
+    highlights: string[];
+  }>;
+  projects: Array<{
+    name: string;
+    description: string;
+    highlights: string[];
+    technologies: string[];
+    url?: string;
+  }>;
+  certifications: Array<{
+    name: string;
+    issuer: string;
+    date?: string;
+    url?: string;
+  }>;
+  languages: Array<{
+    language: string;
+    proficiency?: 'native' | 'fluent' | 'conversational' | 'basic';
+  }>;
+}
+
+export interface CanonicalCoverLetter {
+  header: {
+    senderName: string;
+    senderEmail: string;
+    senderPhone?: string;
+    senderLocation?: string;
+    recipientName?: string;
+    recipientTitle?: string;
+    companyName: string;
+    companyAddress?: string;
+    date: string;
+  };
+  salutation: string;
+  body: string[];
+  closing: string;
+  signature: string;
+  tone: 'professional' | 'enthusiastic' | 'confident' | 'conversational';
+  length: 'short' | 'medium' | 'long';
+}
+
+export interface TailoredResumeResponse {
+  canonicalResume: CanonicalResume;
+  htmlPreview: string;
+  changes: Array<{
+    section: string;
+    field: string;
+    original?: string;
+    proposed: string;
+    reason: string;
+    isNew: boolean;
+  }>;
+  warnings: string[];
+}
+
+export interface GeneratedCoverLetterResponse {
+  canonicalCoverLetter: CanonicalCoverLetter;
+  htmlPreview: string;
+  warnings: string[];
+}
+
+export interface TailorResumeInput {
+  originalResumeId: string;
+  jobId: string;
+  matchReportId?: string;
+  templateId?: string;
+  instructions?: string;
+}
+
+export interface GenerateCoverLetterInput {
+  originalResumeId: string;
+  jobId: string;
+  matchReportId?: string;
+  templateId?: string;
+  tone?: 'professional' | 'enthusiastic' | 'confident' | 'conversational';
+  length?: 'short' | 'medium' | 'long';
+  recipientName?: string;
+  recipientTitle?: string;
+  companyAddress?: string;
+  instructions?: string;
+}
+
+export type GeneratedDocumentType = 'resume' | 'cover-letter';
+export type GeneratedDocumentStatus = 'draft' | 'approved' | 'exported';
+
+export interface GeneratedDocumentView {
+  id: string;
+  ownerId: string;
+  jobId: string;
+  originalResumeId: string;
+  matchReportId?: string;
+  type: GeneratedDocumentType;
+  status: GeneratedDocumentStatus;
+  canonicalContent: CanonicalResume | CanonicalCoverLetter;
+  templateId?: string;
+  templateName?: string;
+  gridFsFileId?: string;
+  fileName?: string;
+  createdAt: string;
+  updatedAt: string;
+  exportedAt?: string;
+}
+
+export interface ExportOptions {
+  format: 'pdf' | 'docx' | 'html';
+  margins?: { top: number; right: number; bottom: number; left: number };
+  pageSize?: 'A4' | 'Letter';
+}
+
+export async function listResumeTemplates(): Promise<ResumeTemplateView[]> {
+  return fetchJson<ResumeTemplateView[]>('/api/resumes/templates/resume', undefined, getAuthToken());
+}
+
+export async function listCoverLetterTemplates(): Promise<CoverLetterTemplateView[]> {
+  return fetchJson<CoverLetterTemplateView[]>('/api/resumes/templates/cover-letter', undefined, getAuthToken());
+}
+
+export async function createResumeTemplate(input: {
+  name: string;
+  description?: string;
+  htmlTemplate: string;
+  cssTemplate: string;
+  isDefault?: boolean;
+}): Promise<ResumeTemplateView> {
+  return fetchJson<ResumeTemplateView>('/api/resumes/templates/resume', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }, getAuthToken());
+}
+
+export async function createCoverLetterTemplate(input: {
+  name: string;
+  description?: string;
+  htmlTemplate: string;
+  cssTemplate: string;
+  isDefault?: boolean;
+}): Promise<CoverLetterTemplateView> {
+  return fetchJson<CoverLetterTemplateView>('/api/resumes/templates/cover-letter', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }, getAuthToken());
+}
+
+export async function updateResumeTemplate(
+  id: string,
+  input: Partial<{ name: string; description: string; htmlTemplate: string; cssTemplate: string; isDefault: boolean }>,
+): Promise<ResumeTemplateView | null> {
+  return fetchJson<ResumeTemplateView>(`/api/resumes/templates/resume/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  }, getAuthToken());
+}
+
+export async function updateCoverLetterTemplate(
+  id: string,
+  input: Partial<{ name: string; description: string; htmlTemplate: string; cssTemplate: string; isDefault: boolean }>,
+): Promise<CoverLetterTemplateView | null> {
+  return fetchJson<CoverLetterTemplateView>(`/api/resumes/templates/cover-letter/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  }, getAuthToken());
+}
+
+export async function deleteResumeTemplate(id: string): Promise<{ ok: boolean }> {
+  return fetchJson<{ ok: boolean }>(`/api/resumes/templates/resume/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  }, getAuthToken());
+}
+
+export async function deleteCoverLetterTemplate(id: string): Promise<{ ok: boolean }> {
+  return fetchJson<{ ok: boolean }>(`/api/resumes/templates/cover-letter/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  }, getAuthToken());
+}
+
+export async function tailorResume(input: TailorResumeInput): Promise<TailoredResumeResponse> {
+  return fetchJson<TailoredResumeResponse>('/api/resumes/tailor', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }, getAuthToken());
+}
+
+export async function generateCoverLetter(input: GenerateCoverLetterInput): Promise<GeneratedCoverLetterResponse> {
+  return fetchJson<GeneratedCoverLetterResponse>('/api/resumes/cover-letter', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }, getAuthToken());
+}
+
+export async function approveGeneratedDocument(id: string): Promise<GeneratedDocumentView> {
+  return fetchJson<GeneratedDocumentView>(`/api/resumes/generated/${encodeURIComponent(id)}/approve`, {
+    method: 'POST',
+  }, getAuthToken());
+}
+
+export async function exportGeneratedDocument(
+  id: string,
+  options: ExportOptions,
+): Promise<{ blob: Blob; fileName: string; contentType: string }> {
+  const token = getAuthToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}/api/resumes/generated/${encodeURIComponent(id)}/export`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(options),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`API ${res.status} ${res.statusText}${text ? ': ' + text : ''}`);
+  }
+  const blob = await res.blob();
+  const contentType = res.headers.get('Content-Type') ?? 'application/octet-stream';
+  const disposition = res.headers.get('Content-Disposition') ?? '';
+  const fileNameMatch = disposition.match(/filename="?([^"]+)"?/);
+  const fileName = fileNameMatch ? fileNameMatch[1] : `export.${options.format}`;
+  return { blob, fileName, contentType };
+}
+
+export async function listGeneratedDocuments(jobId?: string): Promise<GeneratedDocumentView[]> {
+  const params = jobId ? `?jobId=${encodeURIComponent(jobId)}` : '';
+  return fetchJson<GeneratedDocumentView[]>(`/api/resumes/generated${params}`, undefined, getAuthToken());
+}
+
+export async function getGeneratedDocument(id: string): Promise<GeneratedDocumentView> {
+  return fetchJson<GeneratedDocumentView>(`/api/resumes/generated/${encodeURIComponent(id)}`, undefined, getAuthToken());
+}
+
+export async function deleteGeneratedDocument(id: string): Promise<{ ok: boolean }> {
+  return fetchJson<{ ok: boolean }>(`/api/resumes/generated/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  }, getAuthToken());
+}
+
 export { API_BASE };

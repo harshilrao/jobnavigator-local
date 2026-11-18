@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   login,
   register,
@@ -9,7 +10,8 @@ import {
 
 type Mode = 'login' | 'register';
 
-export function Login({ onAuthenticated }: { onAuthenticated: (u: { id: string; email: string }) => void }) {
+export function Login() {
+  const navigate = useNavigate();
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -25,7 +27,7 @@ export function Login({ onAuthenticated }: { onAuthenticated: (u: { id: string; 
       const res = mode === 'login' ? await login(creds) : await register(creds);
       setAuthToken(res.accessToken);
       setCurrentUser({ id: res.user.id, email: res.user.email });
-      onAuthenticated({ id: res.user.id, email: res.user.email });
+      navigate('/');
     } catch (err) {
       setError(
         err instanceof Error ? err.message : mode === 'login' ? 'Login failed' : 'Registration failed',

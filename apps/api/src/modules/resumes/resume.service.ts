@@ -615,7 +615,7 @@ Write the cover letter.`;
 
 /** Build HTML from template and canonical data */
 function buildHtml(templateDoc: ResumeTemplateDoc | CoverLetterTemplateDoc, canonicalContent: CanonicalResume | CanonicalCoverLetter): string {
-  let html = templateDoc.htmlTemplate;
+  const html = templateDoc.htmlTemplate;
   const css = templateDoc.cssTemplate;
 
   // Prepare data for template
