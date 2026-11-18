@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   getJob,
   getDocuments,
@@ -51,6 +51,7 @@ const LENGTH_OPTIONS = [
 export function CoverLetterPage() {
   const navigate = useNavigate();
   const { jobId } = useParams<{ jobId: string }>();
+  const [searchParams] = useSearchParams();
   const [job, setJob] = useState<JobView | null>(null);
   const [documents, setDocuments] = useState<DocumentView[]>([]);
   const [matchReports, setMatchReports] = useState<MatchReportView[]>([]);
@@ -75,6 +76,19 @@ export function CoverLetterPage() {
     loadMatchReports();
     loadTemplates();
   }, [jobId]);
+
+  // Auto-select resume and match report from query params
+  useEffect(() => {
+    if (!jobId) return;
+    const resumeId = searchParams.get('resume');
+    const matchReportId = searchParams.get('match');
+    if (resumeId) {
+      setState(prev => ({ ...prev, resumeId }));
+    }
+    if (matchReportId) {
+      setState(prev => ({ ...prev, matchReportId }));
+    }
+  }, [jobId, searchParams]);
 
   const loadJob = async () => {
     try {
