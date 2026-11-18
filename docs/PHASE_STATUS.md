@@ -308,4 +308,25 @@ Phase 4 complete: backend + frontend. Selected jobs appear in the Jobs table whi
 - `matchreports` collection unique index on (ownerId, jobId, resumeId, modelName, promptVersion) makes re-scoring idempotent when checksums are unchanged.
 - FCC proxy `models` field shows empty string when disabled (cosmetic; provider is unusable unless enabled).
 
-**STOP — Phase 5 (backend + frontend) IMPLEMENTED. Awaiting `APPROVE PHASE 5`.**
+**STOP — Phase 5 (backend + frontend) IMPLEMENTED. ✅ APPROVED**
+
+---
+
+## Phase 6 — Planned
+
+**Goal:** [To be defined - e.g., Application tracking, Cover letter generation, Email notifications, etc.]
+
+**Planned items:**
+- [ ] TBD
+
+**Gates** — to be executed after implementation:
+
+| Gate | Command | Result |
+|------|---------|--------|
+| typecheck | `npm run typecheck` | ⏳ Pending |
+| lint | `npm run lint` | ⏳ Pending |
+| test | `npm run test` | ⏳ Pending |
+| build | `npm run build` | ⏳ Pending |
+| smoke | `npm run smoke` | ⏳ Pending |
+
+**STOP — Phase 6 not started. Awaiting `APPROVE PHASE 6` (after implementation).**
