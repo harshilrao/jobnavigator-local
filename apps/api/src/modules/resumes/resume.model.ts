@@ -36,57 +36,57 @@ export type GeneratedDocumentStatus = 'draft' | 'approved' | 'exported';
 export interface CanonicalResume {
   basics: {
     name: string;
-    email?: string;
-    phone?: string;
-    location?: string;
-    linkedin?: string;
-    github?: string;
-    website?: string;
-    summary?: string;
+    email?: string | null;
+    phone?: string | null;
+    location?: string | null;
+    linkedin?: string | null;
+    github?: string | null;
+    website?: string | null;
+    summary?: string | null;
   };
   skills: Array<{
     name: string;
-    category?: string;
-    level?: 'beginner' | 'intermediate' | 'advanced' | 'expert';
-    evidence?: string;
+    category?: string | null;
+    level?: 'beginner' | 'intermediate' | 'advanced' | 'expert' | null;
+    evidence?: string | null;
   }>;
   experience: Array<{
     company: string;
     title: string;
-    location?: string;
-    startDate: string;
-    endDate?: string;
+    location?: string | null;
+    startDate: string | null;
+    endDate?: string | null;
     current: boolean;
-    description: string;
+    description?: string | null;
     highlights: string[];
     technologies: string[];
   }>;
   education: Array<{
     institution: string;
     degree: string;
-    fieldOfStudy?: string;
-    location?: string;
-    startDate?: string;
-    endDate?: string;
-    gpa?: string;
+    fieldOfStudy?: string | null;
+    location?: string | null;
+    startDate?: string | null;
+    endDate?: string | null;
+    gpa?: string | null;
     highlights: string[];
   }>;
   projects: Array<{
     name: string;
-    description: string;
+    description?: string | null;
     highlights: string[];
     technologies: string[];
-    url?: string;
+    url?: string | null;
   }>;
   certifications: Array<{
     name: string;
     issuer: string;
-    date?: string;
-    url?: string;
+    date?: string | null;
+    url?: string | null;
   }>;
   languages: Array<{
     language: string;
-    proficiency?: 'native' | 'fluent' | 'conversational' | 'basic';
+    proficiency?: 'native' | 'fluent' | 'conversational' | 'basic' | null;
   }>;
 }
 
@@ -95,20 +95,20 @@ export interface CanonicalCoverLetter {
   header: {
     senderName: string;
     senderEmail: string;
-    senderPhone?: string;
-    senderLocation?: string;
-    recipientName?: string;
-    recipientTitle?: string;
+    senderPhone?: string | null;
+    senderLocation?: string | null;
+    recipientName?: string | null;
+    recipientTitle?: string | null;
     companyName: string;
-    companyAddress?: string;
+    companyAddress?: string | null;
     date: string;
   };
-  salutation: string;
+  salutation?: string | null;
   body: string[];
-  closing: string;
-  signature: string;
-  tone: 'professional' | 'enthusiastic' | 'confident' | 'conversational';
-  length: 'short' | 'medium' | 'long';
+  closing?: string | null;
+  signature?: string | null;
+  tone?: 'professional' | 'enthusiastic' | 'confident' | 'conversational' | null;
+  length?: 'short' | 'medium' | 'long' | null;
 }
 
 /** Generated document document */

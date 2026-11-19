@@ -174,12 +174,24 @@ export class OllamaProvider implements AIProvider {
       ],
       stream: false,
       format: 'json',
+      repeat_penalty: 1.1,
       ...(options?.temperature !== undefined && { temperature: options.temperature }),
       ...(options?.maxTokens !== undefined && { num_predict: options.maxTokens }),
     };
 
+    // Detailed logging for debugging
+    console.log('[Ollama] ===== structuredChat REQUEST =====');
+    console.log('[Ollama] model:', this.model);
+    console.log('[Ollama] format: json (structured output mode)');
+    console.log('[Ollama] temperature:', options?.temperature ?? 'default');
+    console.log('[Ollama] maxTokens (num_predict):', options?.maxTokens ?? 'default');
+    console.log('[Ollama] system prompt length:', systemMsg.length);
+    console.log('[Ollama] user prompt length:', lastUser.length);
+    console.log('[Ollama] user prompt preview (first 500 chars):', lastUser.slice(0, 500));
+    console.log('[Ollama] full payload:', JSON.stringify(payload, null, 2));
+
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000);
+    const timeout = setTimeout(() => controller.abort(), 300000);
     try {
       const res = await fetch(`${this.baseUrl}/api/chat`, {
         method: 'POST',
@@ -188,37 +200,110 @@ export class OllamaProvider implements AIProvider {
         signal: controller.signal,
       });
       clearTimeout(timeout);
+      console.log('[Ollama] structuredChat response status:', res.status);
       if (!res.ok) {
-        throw new Error(`Ollama chat returned HTTP ${res.status}`);
+        const text = await res.text().catch(() => '');
+        throw new Error(`Ollama chat returned HTTP ${res.status}: ${text}`);
       }
       const data = await res.json();
       const content = data.message?.content ?? '';
+
+      // Detailed response logging
+      console.log('[Ollama] ===== structuredChat RESPONSE =====');
+      console.log('[Ollama] response content length:', content.length);
+      console.log('[Ollama] raw response content (first 1000 chars):', content.slice(0, 1000));
+      console.log('[Ollama] raw response content (last 500 chars):', content.slice(-500));
+
+      // Check if response looks like valid JSON
+      let isValidJson = false;
+      let parsedContent: unknown = null;
+      try {
+        parsedContent = JSON.parse(content);
+        isValidJson = true;
+        console.log('[Ollama] response is VALID JSON');
+        console.log('[Ollama] parsed JSON keys:', Object.keys(parsedContent as object));
+      } catch (jsonErr) {
+        console.log('[Ollama] response is NOT valid JSON (string or malformed)');
+        console.log('[Ollama] JSON parse error:', jsonErr);
+      }
+
       return this.parseAndRepair(content, schema);
     } catch (err) {
       clearTimeout(timeout);
+      console.error('[Ollama] structuredChat error:', err);
       throw err;
     }
   }
 
   private async parseAndRepair<T>(content: string, schema: z.ZodSchema<T>): Promise<T> {
+    console.log('[Ollama] ===== parseAndRepair ATTEMPT 1: Direct parse =====');
+    console.log('[Ollama] content length:', content.length);
+    console.log('[Ollama] content preview (first 500):', content.slice(0, 500));
+
     // Attempt 1: parse directly.
     try {
-      return schema.parse(JSON.parse(content));
-    } catch {
-      // Attempt 2: bounded repair — ask model to re-emit clean JSON.
-      // We reuse a minimal self-correction prompt rather than infinite loops.
-      const repair = await this.structuredChat(
-        [
+      const parsed = JSON.parse(content);
+      console.log('[Ollama] JSON parsed successfully, validating against schema...');
+      const result = schema.parse(parsed);
+      console.log('[Ollama] Schema validation PASSED');
+      return result;
+    } catch (parseErr) {
+      console.log('[Ollama] Direct parse/validation FAILED:', parseErr);
+      console.log('[Ollama] ===== parseAndRepair ATTEMPT 2: Bounded repair =====');
+
+      // Attempt 2: bounded repair — ask model to re-emit clean JSON using direct fetch
+      // (avoids infinite recursion through structuredChat -> parseAndRepair)
+      const repairPrompt = `The previous response was invalid JSON. Re-emit valid JSON only matching the schema:
+${content.slice(0, 2000)}`;
+
+      const payload: Record<string, unknown> = {
+        model: this.model,
+        messages: [
           { role: 'system', content: 'Return only valid JSON matching the schema. No prose.' },
-          {
-            role: 'user',
-            content: `The previous response was invalid JSON. Re-emit the same match report as clean JSON only:
-${content.slice(0, 2000)}`,
-          },
+          { role: 'user', content: repairPrompt },
         ],
-        schema
-      );
-      return repair;
+        stream: false,
+        format: 'json',
+        repeat_penalty: 1.1,
+      };
+
+      console.log('[Ollama] Repair payload:', JSON.stringify(payload, null, 2));
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 180000);
+      try {
+        const res = await fetch(`${this.baseUrl}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (!res.ok) {
+          throw new Error(`Ollama repair returned HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        const repairContent = data.message?.content ?? '';
+
+        console.log('[Ollama] Repair response status:', res.status);
+        console.log('[Ollama] Repair response content length:', repairContent.length);
+        console.log('[Ollama] Repair response content (first 1000):', repairContent.slice(0, 1000));
+
+        let isValidJson = false;
+        try {
+          const parsed = JSON.parse(repairContent);
+          isValidJson = true;
+          console.log('[Ollama] Repair response is VALID JSON');
+          console.log('[Ollama] Repair parsed keys:', Object.keys(parsed));
+        } catch {
+          console.log('[Ollama] Repair response is NOT valid JSON');
+        }
+
+        return schema.parse(JSON.parse(repairContent));
+      } catch (repairErr) {
+        clearTimeout(timeout);
+        console.error('[Ollama] parseAndRepair failed:', repairErr);
+        throw parseErr; // Throw original parse error
+      }
     }
   }
 
@@ -307,7 +392,7 @@ export class FccProxyProvider implements AIProvider {
     };
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000);
+    const timeout = setTimeout(() => controller.abort(), 300000);
     try {
       const res = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -331,19 +416,40 @@ export class FccProxyProvider implements AIProvider {
   private async parseAndRepair<T>(content: string, schema: z.ZodSchema<T>): Promise<T> {
     try {
       return schema.parse(JSON.parse(content));
-    } catch {
-      const repair = await this.structuredChat(
-        [
+    } catch (parseErr) {
+      // Bounded repair via direct fetch to avoid infinite recursion
+      const repairPrompt = `Re-emit valid JSON only matching the schema:
+${content.slice(0, 2000)}`;
+
+      const payload: Record<string, unknown> = {
+        model: this.model,
+        messages: [
           { role: 'system', content: 'Return only valid JSON matching the schema. No prose.' },
-          {
-            role: 'user',
-            content: `Re-emit valid JSON only:
-${content.slice(0, 2000)}`,
-          },
+          { role: 'user', content: repairPrompt },
         ],
-        schema
-      );
-      return repair;
+        response_format: { type: 'json_object' },
+      };
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 180000);
+      try {
+        const res = await fetch(`${this.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        if (!res.ok) {
+          throw new Error(`FCC proxy repair returned HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        const repairContent = data.choices?.[0]?.message?.content ?? '';
+        return schema.parse(JSON.parse(repairContent));
+      } catch (repairErr) {
+        clearTimeout(timeout);
+        throw parseErr;
+      }
     }
   }
 

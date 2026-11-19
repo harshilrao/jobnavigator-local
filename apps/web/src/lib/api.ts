@@ -826,12 +826,14 @@ export interface TailoredResumeResponse {
     isNew: boolean;
   }>;
   warnings: string[];
+  generatedDocumentId: string;
 }
 
 export interface GeneratedCoverLetterResponse {
   canonicalCoverLetter: CanonicalCoverLetter;
   htmlPreview: string;
   warnings: string[];
+  generatedDocumentId: string;
 }
 
 export interface TailorResumeInput {

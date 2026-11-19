@@ -121,10 +121,12 @@ export function ResumeTailorPage() {
       return;
     }
 
+    const startTime = Date.now();
     setState(prev => ({ ...prev, loading: true, error: null }));
 
     try {
-      console.log('[ResumeTailor] Calling tailorResume API...');
+      console.log('[ResumeTailor] Calling tailorResume API... (this may take 60-120s for Ollama)');
+      const apiStartTime = Date.now();
       const response = await tailorResume({
         originalResumeId: state.resumeId,
         jobId: jobId!,
@@ -132,19 +134,25 @@ export function ResumeTailorPage() {
         templateId: state.templateId,
         instructions: state.instructions,
       });
+      const apiDuration = Date.now() - apiStartTime;
+      console.log('[ResumeTailor] tailorResume API completed in', apiDuration, 'ms');
       console.log('[ResumeTailor] tailorResume response:', response);
 
       setState(prev => ({
         ...prev,
         step: 'preview',
         tailoredResponse: response,
+        generatedDocId: response.generatedDocumentId,
         loading: false,
         acceptedChanges: new Set(),
         rejectedChanges: new Set(),
       }));
+      const totalDuration = Date.now() - startTime;
+      console.log('[ResumeTailor] Total handleGenerate completed in', totalDuration, 'ms');
       console.log('[ResumeTailor] State updated to preview step');
     } catch (err) {
-      console.error('[ResumeTailor] Error:', err);
+      const totalDuration = Date.now() - startTime;
+      console.error('[ResumeTailor] Error after', totalDuration, 'ms:', err);
       setState(prev => ({
         ...prev,
         loading: false,
@@ -174,30 +182,20 @@ export function ResumeTailorPage() {
   };
 
   const handleApprove = async () => {
-    if (!state.tailoredResponse) return;
+    if (!state.tailoredResponse || !state.generatedDocId) return;
 
     setState(prev => ({ ...prev, loading: true, error: null }));
 
     try {
-      // First, we need to save the tailored resume as a generated document
-      // The tailorResume endpoint already saves it as a draft, we just need to approve it
-      // But we need the document ID - let's fetch the latest generated document
-      const { matches } = await getJobMatches(jobId!);
-      const latestDraft = matches
-        .filter(m => m.status === 'pending' || m.status === 'complete')
-        .sort((a, b) => new Date(b.generatedAt).getTime() - new Date(a.generatedAt).getTime())[0];
-
-      if (latestDraft) {
-        const approved = await approveGeneratedDocument(latestDraft.id);
-        setState(prev => ({
-          ...prev,
-          step: 'approved',
-          generatedDocId: approved.id,
-          loading: false,
-        }));
-      } else {
-        throw new Error('No draft found to approve');
-      }
+      // The tailorResume endpoint already saves the document as a draft with generatedDocumentId
+      // We just need to approve it using that ID
+      const approved = await approveGeneratedDocument(state.generatedDocId);
+      setState(prev => ({
+        ...prev,
+        step: 'approved',
+        generatedDocId: approved.id,
+        loading: false,
+      }));
     } catch (err) {
       setState(prev => ({
         ...prev,
@@ -445,7 +443,7 @@ export function ResumeTailorPage() {
               disabled={state.loading || !state.resumeId || !state.templateId}
               className="w-full py-3 px-4 text-lg font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
             >
-              {state.loading ? 'Generating...' : 'Generate Tailored Resume'}
+              {state.loading ? 'Generating... (Ollama may take 60-120s, check console)' : 'Generate Tailored Resume'}
             </button>
           </div>
         </div>

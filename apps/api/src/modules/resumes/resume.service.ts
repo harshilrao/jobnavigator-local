@@ -67,18 +67,20 @@ export interface TailoredResumeResponse {
   changes: Array<{
     section: string;
     field: string;
-    original?: string;
+    original?: string | null;
     proposed: string;
-    reason: string;
+    reason?: string | null;
     isNew: boolean;
   }>;
   warnings: string[];
+  generatedDocumentId: string;
 }
 
 export interface GeneratedCoverLetterResponse {
   canonicalCoverLetter: CanonicalCoverLetter;
   htmlPreview: string;
   warnings: string[];
+  generatedDocumentId: string;
 }
 
 /** Initialize default system templates for a user */
@@ -353,13 +355,18 @@ function renderTemplate(template: string, data: Record<string, unknown>): string
 
 /** Raw AI response type (all fields optional) */
 interface RawCanonicalResume {
-  basics?: { name?: string; email?: string; phone?: string; location?: string; linkedin?: string; github?: string; website?: string; summary?: string };
-  skills?: Array<{ name: string; category?: string; level?: string; evidence?: string }>;
-  experience?: Array<{ company: string; title: string; location?: string; startDate: string; endDate?: string; current?: boolean; description: string; highlights?: string[]; technologies?: string[] }>;
-  education?: Array<{ institution: string; degree: string; fieldOfStudy?: string; location?: string; startDate?: string; endDate?: string; gpa?: string; highlights?: string[] }>;
-  projects?: Array<{ name: string; description: string; highlights?: string[]; technologies?: string[]; url?: string }>;
-  certifications?: Array<{ name: string; issuer: string; date?: string; url?: string }>;
-  languages?: Array<{ language: string; proficiency?: string }>;
+  basics?: { name?: string | null; email?: string | null; phone?: string | null; location?: string | null; linkedin?: string | null; github?: string | null; website?: string | null; summary?: string | null };
+  skills?: Array<{ name: string; category?: string | null; level?: string | null; evidence?: string | null }>;
+  experience?: Array<{ company: string; title: string; location?: string | null; startDate?: string | null; endDate?: string | null; current?: boolean | null; description?: string | null; highlights?: string[] | null; technologies?: string[] | null }>;
+  education?: Array<{ institution: string; degree: string; fieldOfStudy?: string | null; location?: string | null; startDate?: string | null; endDate?: string | null; gpa?: string | null; highlights?: string[] | null }>;
+  projects?: Array<{ name: string; description?: string | null; highlights?: string[] | null; technologies?: string[] | null; url?: string | null }>;
+  certifications?: Array<{ name: string; issuer: string; date?: string | null; url?: string | null }>;
+  languages?: Array<{ language: string; proficiency?: string | null }>;
+}
+
+/** Convert null to undefined for optional fields */
+function nullableToUndefined<T>(value: T | null | undefined): T | undefined {
+  return value === null ? undefined : value;
 }
 
 /** Deep-apply defaults to canonical resume from AI response */
@@ -367,65 +374,65 @@ function applyCanonicalResumeDefaults(resume: RawCanonicalResume): CanonicalResu
   return {
     basics: {
       name: resume.basics?.name ?? '',
-      email: resume.basics?.email,
-      phone: resume.basics?.phone,
-      location: resume.basics?.location,
-      linkedin: resume.basics?.linkedin,
-      github: resume.basics?.github,
-      website: resume.basics?.website,
-      summary: resume.basics?.summary,
+      email: nullableToUndefined(resume.basics?.email),
+      phone: nullableToUndefined(resume.basics?.phone),
+      location: nullableToUndefined(resume.basics?.location),
+      linkedin: nullableToUndefined(resume.basics?.linkedin),
+      github: nullableToUndefined(resume.basics?.github),
+      website: nullableToUndefined(resume.basics?.website),
+      summary: nullableToUndefined(resume.basics?.summary),
     },
-    skills: (resume.skills ?? []).map(s => ({ name: s.name, category: s.category, level: s.level as any, evidence: s.evidence })),
+    skills: (resume.skills ?? []).map(s => ({ name: s.name, category: nullableToUndefined(s.category), level: nullableToUndefined(s.level) as any, evidence: nullableToUndefined(s.evidence) })),
     experience: (resume.experience ?? []).map(e => ({
       company: e.company,
       title: e.title,
-      location: e.location,
-      startDate: e.startDate,
-      endDate: e.endDate,
+      location: nullableToUndefined(e.location),
+      startDate: nullableToUndefined(e.startDate) ?? '',
+      endDate: nullableToUndefined(e.endDate),
       current: e.current ?? false,
-      description: e.description,
+      description: nullableToUndefined(e.description) ?? '',
       highlights: e.highlights ?? [],
       technologies: e.technologies ?? [],
     })),
     education: (resume.education ?? []).map(e => ({
       institution: e.institution,
       degree: e.degree,
-      fieldOfStudy: e.fieldOfStudy,
-      location: e.location,
-      startDate: e.startDate,
-      endDate: e.endDate,
-      gpa: e.gpa,
+      fieldOfStudy: nullableToUndefined(e.fieldOfStudy),
+      location: nullableToUndefined(e.location),
+      startDate: nullableToUndefined(e.startDate),
+      endDate: nullableToUndefined(e.endDate),
+      gpa: nullableToUndefined(e.gpa),
       highlights: e.highlights ?? [],
     })),
     projects: (resume.projects ?? []).map(p => ({
       name: p.name,
-      description: p.description,
+      description: nullableToUndefined(p.description) ?? '',
       highlights: p.highlights ?? [],
       technologies: p.technologies ?? [],
-      url: p.url,
+      url: nullableToUndefined(p.url),
     })),
     certifications: (resume.certifications ?? []).map(c => ({
       name: c.name,
       issuer: c.issuer,
-      date: c.date,
-      url: c.url,
+      date: nullableToUndefined(c.date),
+      url: nullableToUndefined(c.url),
     })),
     languages: (resume.languages ?? []).map(l => ({
       language: l.language,
-      proficiency: l.proficiency as any,
+      proficiency: nullableToUndefined(l.proficiency) as any,
     })),
   };
 }
 
 /** Raw AI response type for cover letter (all fields optional) */
 interface RawCanonicalCoverLetter {
-  header?: { senderName?: string; senderEmail?: string; senderPhone?: string; senderLocation?: string; recipientName?: string; recipientTitle?: string; companyName?: string; companyAddress?: string; date?: string };
-  salutation?: string;
-  body?: string[];
-  closing?: string;
-  signature?: string;
-  tone?: string;
-  length?: string;
+  header?: { senderName?: string | null; senderEmail?: string | null; senderPhone?: string | null; senderLocation?: string | null; recipientName?: string | null; recipientTitle?: string | null; companyName?: string | null; companyAddress?: string | null; date?: string | null };
+  salutation?: string | null;
+  body?: string[] | null;
+  closing?: string | null;
+  signature?: string | null;
+  tone?: string | null;
+  length?: string | null;
 }
 
 /** Deep-apply defaults to canonical cover letter from AI response */
@@ -434,20 +441,20 @@ function applyCanonicalCoverLetterDefaults(letter: RawCanonicalCoverLetter): Can
     header: {
       senderName: letter.header?.senderName ?? '',
       senderEmail: letter.header?.senderEmail ?? '',
-      senderPhone: letter.header?.senderPhone,
-      senderLocation: letter.header?.senderLocation,
-      recipientName: letter.header?.recipientName,
-      recipientTitle: letter.header?.recipientTitle,
+      senderPhone: nullableToUndefined(letter.header?.senderPhone),
+      senderLocation: nullableToUndefined(letter.header?.senderLocation),
+      recipientName: nullableToUndefined(letter.header?.recipientName),
+      recipientTitle: nullableToUndefined(letter.header?.recipientTitle),
       companyName: letter.header?.companyName ?? '',
-      companyAddress: letter.header?.companyAddress,
-      date: letter.header?.date ?? '',
+      companyAddress: nullableToUndefined(letter.header?.companyAddress),
+      date: nullableToUndefined(letter.header?.date) ?? '',
     },
-    salutation: letter.salutation ?? '',
+    salutation: nullableToUndefined(letter.salutation) ?? '',
     body: letter.body ?? [],
-    closing: letter.closing ?? '',
-    signature: letter.signature ?? '',
-    tone: (letter.tone as any) ?? 'professional',
-    length: (letter.length as any) ?? 'medium',
+    closing: nullableToUndefined(letter.closing) ?? '',
+    signature: nullableToUndefined(letter.signature) ?? '',
+    tone: (nullableToUndefined(letter.tone) as any) ?? 'professional',
+    length: (nullableToUndefined(letter.length) as any) ?? 'medium',
   };
 }
 
@@ -497,7 +504,9 @@ Extract the canonical resume JSON.`;
   ];
 
   const { CanonicalResumeSchema } = await import('@jobnavigator/shared');
+  console.log('[API] Calling extractCanonicalResume (structuredChat)...');
   const result = await provider.structuredChat(messages, CanonicalResumeSchema, { temperature: 0.1, maxTokens: 4000 });
+  console.log('[API] extractCanonicalResume complete');
   return applyCanonicalResumeDefaults(result);
 }
 
@@ -538,22 +547,26 @@ ${instructions ? `USER INSTRUCTIONS: ${instructions}` : ''}
 
 Propose a tailored resume. For each change, include: section, field, original (if changed), proposed, reason, isNew (true for additions).`;
 
-  const { TailoredResumeResponseSchema } = await import('@jobnavigator/shared');
-  const result = await provider.structuredChat(
+  const { RawTailoredResumeResponseSchema, TailoredResumeResponseSchema } = await import('@jobnavigator/shared');
+  console.log('[API] Calling tailorCanonicalResume (structuredChat)...');
+  const rawResult = await provider.structuredChat(
     [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
     ],
-    TailoredResumeResponseSchema,
+    RawTailoredResumeResponseSchema,
     { temperature: 0.2, maxTokens: 4000 }
   );
+  console.log('[API] tailorCanonicalResume complete');
+  // Normalize: accept multiple field names that AI might return
+  const canonicalResumeInput = rawResult.canonicalResume ?? rawResult.tailoredResume ?? rawResult.tailoredCanonicalResume ?? {};
   // Apply defaults to nested fields
-  return {
-    ...result,
-    canonicalResume: applyCanonicalResumeDefaults(result.canonicalResume),
-    changes: (result.changes ?? []).map(c => ({ ...c, isNew: c.isNew ?? false })),
-    warnings: result.warnings ?? [],
-  };
+  const canonicalResumeResult = applyCanonicalResumeDefaults(canonicalResumeInput);
+  const changes = (rawResult.changes ?? []).map(c => ({ ...c, isNew: c.isNew ?? false }));
+  const warnings = rawResult.warnings ?? [];
+  // Validate final result against strict schema
+  const validated = TailoredResumeResponseSchema.parse({ canonicalResume: canonicalResumeResult, changes, warnings });
+  return validated;
 }
 
 /** Generate cover letter from canonical resume and job description */
@@ -596,20 +609,34 @@ ${options.instructions ? `- Instructions: ${options.instructions}` : ''}
 
 Write the cover letter.`;
 
-  const { GeneratedCoverLetterResponseSchema } = await import('@jobnavigator/shared');
+  const { RawGeneratedCoverLetterResponseSchema } = await import('@jobnavigator/shared');
   const result = await provider.structuredChat(
     [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
     ],
-    GeneratedCoverLetterResponseSchema,
+    RawGeneratedCoverLetterResponseSchema,
     { temperature: 0.3, maxTokens: 3000 }
   );
+
+  // Handle case where AI returns stringified JSON for canonicalCoverLetter
+  let coverLetter: RawCanonicalCoverLetter;
+  if (typeof result.canonicalCoverLetter === 'string') {
+    try {
+      coverLetter = JSON.parse(result.canonicalCoverLetter);
+    } catch {
+      coverLetter = {};
+    }
+  } else {
+    coverLetter = result.canonicalCoverLetter ?? {};
+  }
+
   // Apply defaults to nested fields
   return {
-    ...result,
-    canonicalCoverLetter: applyCanonicalCoverLetterDefaults(result.canonicalCoverLetter),
-    warnings: result.warnings ?? [],
+    canonicalCoverLetter: applyCanonicalCoverLetterDefaults(coverLetter),
+    warnings: Array.isArray(result.warnings)
+      ? result.warnings.map(w => typeof w === 'string' ? w : JSON.stringify(w))
+      : [],
   };
 }
 
@@ -695,44 +722,56 @@ export async function tailorResume(
   ownerId: string,
   input: { originalResumeId: string; jobId: string; matchReportId?: string; templateId?: string; instructions?: string }
 ): Promise<TailoredResumeResponse> {
+  console.log('[API] tailorResume start', { ownerId, input });
   const env = getEnv();
   const provider = createProvider(env.AI_PROVIDER as 'ollama' | 'fcc-proxy');
 
   // Fetch original resume
+  console.log('[API] Fetching original resume...');
   const originalDoc = await OriginalDocument.findOne({ _id: input.originalResumeId, ownerId, deletedAt: { $exists: false } });
   if (!originalDoc) throw new Error('Original resume not found');
   if (originalDoc.textExtractionStatus !== 'complete' || !originalDoc.extractedText) {
     throw new Error('Resume text not extracted or incomplete');
   }
+  console.log('[API] Original resume found, text length:', originalDoc.extractedText.length);
 
   // Fetch job
+  console.log('[API] Fetching job...');
   const job = await Job.findOne({ _id: input.jobId, ownerId });
   if (!job) throw new Error('Job not found');
   if (!job.description || job.descriptionStatus === 'missing') {
     throw new Error('Job description is missing');
   }
+  console.log('[API] Job found:', job.title);
 
   // Fetch match report if provided
   let matchReport: MatchReportOutput | undefined;
   if (input.matchReportId) {
+    console.log('[API] Fetching match report...');
     const report = await MatchReport.findOne({ _id: input.matchReportId, ownerId });
     if (report) matchReport = report.matchReport as MatchReportOutput;
+    console.log('[API] Match report found:', !!matchReport);
   }
 
   // If no match report, create a basic one from scoring
   if (!matchReport) {
+    console.log('[API] No match report provided, scoring job...');
     const scored = await provider.structuredChat(
       buildScoringMessages(originalDoc.extractedText, job.description),
       (await import('../ai/ai.provider')).MatchReportSchema,
       { temperature: 0.1 }
     );
     matchReport = scored;
+    console.log('[API] Job scored, matchScore:', matchReport.matchScore);
   }
 
   // Extract canonical resume from original
+  console.log('[API] Extracting canonical resume...');
   const canonicalResume = await extractCanonicalResume(provider, originalDoc.extractedText, job.description, matchReport);
+  console.log('[API] Canonical resume extracted');
 
   // Tailor it for the job
+  console.log('[API] Tailoring canonical resume...');
   const { canonicalResume: tailoredResume, changes, warnings } = await tailorCanonicalResume(
     provider,
     canonicalResume,
@@ -740,8 +779,10 @@ export async function tailorResume(
     matchReport,
     input.instructions
   );
+  console.log('[API] Resume tailored, changes:', changes.length);
 
   // Get template
+  console.log('[API] Fetching template...');
   let template: ResumeTemplateDoc;
   if (input.templateId) {
     const t = await ResumeTemplate.findOne({ _id: input.templateId, ownerId });
@@ -750,11 +791,15 @@ export async function tailorResume(
   } else {
     template = await getDefaultResumeTemplate(ownerId);
   }
+  console.log('[API] Template found:', template.name);
 
   // Build HTML preview
+  console.log('[API] Building HTML preview...');
   const htmlPreview = buildHtml(template, tailoredResume);
+  console.log('[API] HTML preview built, length:', htmlPreview.length);
 
   // Store as draft
+  console.log('[API] Storing generated document...');
   const generated = await GeneratedDocument.create({
     ownerId: new mongoose.Types.ObjectId(ownerId),
     jobId: new mongoose.Types.ObjectId(input.jobId),
@@ -766,12 +811,15 @@ export async function tailorResume(
     templateId: template._id,
     templateName: template.name,
   });
+  console.log('[API] Generated document stored:', generated._id);
 
+  console.log('[API] tailorResume complete');
   return {
     canonicalResume: tailoredResume,
     htmlPreview,
     changes,
     warnings,
+    generatedDocumentId: generated._id.toString(),
   };
 }
 
@@ -791,11 +839,14 @@ export async function generateCoverLetterService(
   }
 
   // Fetch job
-  const job = await Job.findOne({ _id: input.jobId, ownerId });
+  const job = await Job.findOne({ _id: input.jobId, ownerId }).populate('companyId', 'name');
   if (!job) throw new Error('Job not found');
   if (!job.description || job.descriptionStatus === 'missing') {
     throw new Error('Job description is missing');
   }
+
+  // Get company name
+  const companyName = (job.companyId as { name?: string } | null)?.name || 'the company';
 
   // Fetch match report if provided
   let matchReport: MatchReportOutput | undefined;
@@ -832,7 +883,7 @@ export async function generateCoverLetterService(
   canonicalCoverLetter.header.senderEmail = canonicalResume.basics.email || '';
   canonicalCoverLetter.header.senderPhone = canonicalResume.basics.phone;
   canonicalCoverLetter.header.senderLocation = canonicalResume.basics.location;
-  canonicalCoverLetter.header.companyName = job.companyId?.toString() || 'the company';
+  canonicalCoverLetter.header.companyName = companyName;
   canonicalCoverLetter.header.date = new Date().toISOString().split('T')[0];
 
   // Get template
@@ -849,7 +900,7 @@ export async function generateCoverLetterService(
   const htmlPreview = buildHtml(template, canonicalCoverLetter);
 
   // Store as draft
-  await GeneratedDocument.create({
+  const generated = await GeneratedDocument.create({
     ownerId: new mongoose.Types.ObjectId(ownerId),
     jobId: new mongoose.Types.ObjectId(input.jobId),
     originalResumeId: new mongoose.Types.ObjectId(input.originalResumeId),
@@ -861,7 +912,7 @@ export async function generateCoverLetterService(
     templateName: template.name,
   });
 
-  return { canonicalCoverLetter, htmlPreview, warnings };
+  return { canonicalCoverLetter, htmlPreview, warnings, generatedDocumentId: generated._id.toString() };
 }
 
 /** Approve a generated document (mark as approved) */

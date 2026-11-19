@@ -37,26 +37,35 @@ export type CoverLetterTemplate = z.infer<typeof CoverLetterTemplateSchema>;
 export const CanonicalResumeSchema = z.object({
   basics: z.object({
     name: z.string(),
-    email: z.string().email().optional(),
-    phone: z.string().optional(),
-    location: z.string().optional(),
-    linkedin: z.string().url().optional(),
-    github: z.string().url().optional(),
-    website: z.string().url().optional(),
-    summary: z.string().optional(),
+    email: z.string().email().nullable().optional(),
+    phone: z.string().nullable().optional(),
+    location: z.string().nullable().optional(),
+    linkedin: z.string().nullable().optional().transform((val) => {
+      if (!val || val === '') return null;
+      try { new URL(val); return val; } catch { return null; }
+    }),
+    github: z.string().nullable().optional().transform((val) => {
+      if (!val || val === '') return null;
+      try { new URL(val); return val; } catch { return null; }
+    }),
+    website: z.string().nullable().optional().transform((val) => {
+      if (!val || val === '') return null;
+      try { new URL(val); return val; } catch { return null; }
+    }),
+    summary: z.string().nullable().optional(),
   }),
   skills: z.array(z.object({
     name: z.string(),
-    category: z.string().optional(),
-    level: z.enum(['beginner', 'intermediate', 'advanced', 'expert']).optional(),
-    evidence: z.string().optional(), // Resume quote supporting this skill
+    category: z.string().nullable().optional(),
+    level: z.enum(['beginner', 'intermediate', 'advanced', 'expert']).nullable().optional(),
+    evidence: z.string().nullable().optional(), // Resume quote supporting this skill
   })).default([]),
   experience: z.array(z.object({
     company: z.string(),
     title: z.string(),
-    location: z.string().optional(),
+    location: z.string().nullable().optional(),
     startDate: z.string(), // ISO date string
-    endDate: z.string().optional(), // ISO date string or 'present'
+    endDate: z.string().nullable().optional(), // ISO date string or 'present'
     current: z.boolean().default(false),
     description: z.string(),
     highlights: z.array(z.string()).default([]),
@@ -65,11 +74,11 @@ export const CanonicalResumeSchema = z.object({
   education: z.array(z.object({
     institution: z.string(),
     degree: z.string(),
-    fieldOfStudy: z.string().optional(),
-    location: z.string().optional(),
-    startDate: z.string().optional(),
-    endDate: z.string().optional(),
-    gpa: z.string().optional(),
+    fieldOfStudy: z.string().nullable().optional(),
+    location: z.string().nullable().optional(),
+    startDate: z.string().nullable().optional(),
+    endDate: z.string().nullable().optional(),
+    gpa: z.string().nullable().optional(),
     highlights: z.array(z.string()).default([]),
   })).default([]),
   projects: z.array(z.object({
@@ -77,17 +86,23 @@ export const CanonicalResumeSchema = z.object({
     description: z.string(),
     highlights: z.array(z.string()).default([]),
     technologies: z.array(z.string()).default([]),
-    url: z.string().url().optional(),
+    url: z.string().nullable().optional().transform((val) => {
+      if (!val || val === '') return null;
+      try { new URL(val); return val; } catch { return null; }
+    }),
   })).default([]),
   certifications: z.array(z.object({
     name: z.string(),
     issuer: z.string(),
-    date: z.string().optional(),
-    url: z.string().url().optional(),
+    date: z.string().nullable().optional(),
+    url: z.string().nullable().optional().transform((val) => {
+      if (!val || val === '') return null;
+      try { new URL(val); return val; } catch { return null; }
+    }),
   })).default([]),
   languages: z.array(z.object({
     language: z.string(),
-    proficiency: z.enum(['native', 'fluent', 'conversational', 'basic']).optional(),
+    proficiency: z.enum(['native', 'fluent', 'conversational', 'basic']).nullable().optional(),
   })).default([]),
 });
 export type CanonicalResume = z.infer<typeof CanonicalResumeSchema>;
@@ -97,20 +112,20 @@ export const CanonicalCoverLetterSchema = z.object({
   header: z.object({
     senderName: z.string(),
     senderEmail: z.string().email(),
-    senderPhone: z.string().optional(),
-    senderLocation: z.string().optional(),
-    recipientName: z.string().optional(),
-    recipientTitle: z.string().optional(),
+    senderPhone: z.string().nullable().optional(),
+    senderLocation: z.string().nullable().optional(),
+    recipientName: z.string().nullable().optional(),
+    recipientTitle: z.string().nullable().optional(),
     companyName: z.string(),
-    companyAddress: z.string().optional(),
+    companyAddress: z.string().nullable().optional(),
     date: z.string(), // ISO date string
   }),
-  salutation: z.string(),
-  body: z.array(z.string()), // Paragraphs
-  closing: z.string(),
-  signature: z.string(),
-  tone: z.enum(['professional', 'enthusiastic', 'confident', 'conversational']).default('professional'),
-  length: z.enum(['short', 'medium', 'long']).default('medium'),
+  salutation: z.string().nullable().optional(),
+  body: z.array(z.string()).default([]),
+  closing: z.string().nullable().optional(),
+  signature: z.string().nullable().optional(),
+  tone: z.enum(['professional', 'enthusiastic', 'confident', 'conversational']).nullable().optional().default('professional'),
+  length: z.enum(['short', 'medium', 'long']).nullable().optional().default('medium'),
 });
 export type CanonicalCoverLetter = z.infer<typeof CanonicalCoverLetterSchema>;
 
@@ -139,21 +154,51 @@ export const GenerateCoverLetterInputSchema = z.object({
 });
 export type GenerateCoverLetterInput = z.infer<typeof GenerateCoverLetterInputSchema>;
 
-/** AI-generated tailored resume response */
-export const TailoredResumeResponseSchema = z.object({
-  canonicalResume: CanonicalResumeSchema,
-  htmlPreview: z.string(),
+/** Raw AI response for tailored resume (all fields optional for repair tolerance) */
+// Accept both 'canonicalResume' (expected) and 'tailoredResume' (what AI actually returns)
+// Use a loose schema that accepts any structure for AI tolerance
+const LooseCanonicalResumeSchema = z.record(z.unknown()).optional();
+
+export const RawTailoredResumeResponseSchema = z.object({
+  // Support multiple field names that AI might return:
+  // - canonicalResume (expected by prompt)
+  // - tailoredResume (what AI returned initially)
+  // - tailoredCanonicalResume (what AI returns now)
+  canonicalResume: LooseCanonicalResumeSchema,
+  tailoredResume: LooseCanonicalResumeSchema,
+  tailoredCanonicalResume: LooseCanonicalResumeSchema,
   changes: z.array(z.object({
     section: z.string(),
     field: z.string(),
-    original: z.string().optional(),
+    original: z.string().nullable().optional(),
+    proposed: z.string().nullable().optional(),
+    reason: z.string().nullable().optional(),
+    isNew: z.boolean().nullable().optional(),
+  })).optional(),
+  warnings: z.array(z.string()).nullable().optional(),
+}).passthrough(); // Allow extra fields
+export type RawTailoredResumeResponse = z.infer<typeof RawTailoredResumeResponseSchema>;
+
+/** AI-generated tailored resume response (from AI, before HTML preview is built) */
+export const TailoredResumeResponseSchema = z.object({
+  canonicalResume: CanonicalResumeSchema,
+  changes: z.array(z.object({
+    section: z.string(),
+    field: z.string(),
+    original: z.string().nullable().optional(),
     proposed: z.string(),
-    reason: z.string(),
+    reason: z.string().nullable().optional().default(''),
     isNew: z.boolean().default(false),
   })).default([]),
   warnings: z.array(z.string()).default([]),
 });
 export type TailoredResumeResponse = z.infer<typeof TailoredResumeResponseSchema>;
+
+/** Full tailored resume response including HTML preview (for API responses) */
+export const FullTailoredResumeResponseSchema = TailoredResumeResponseSchema.extend({
+  htmlPreview: z.string(),
+});
+export type FullTailoredResumeResponse = z.infer<typeof FullTailoredResumeResponseSchema>;
 
 /** AI-generated cover letter response */
 export const GeneratedCoverLetterResponseSchema = z.object({
@@ -162,6 +207,17 @@ export const GeneratedCoverLetterResponseSchema = z.object({
   warnings: z.array(z.string()).default([]),
 });
 export type GeneratedCoverLetterResponse = z.infer<typeof GeneratedCoverLetterResponseSchema>;
+
+/** Raw AI response for cover letter (all fields optional for repair tolerance) */
+// Accept both object and string (stringified JSON) for canonicalCoverLetter
+const LooseCanonicalCoverLetterSchema = z.union([z.record(z.unknown()), z.string()]).optional();
+
+export const RawGeneratedCoverLetterResponseSchema = z.object({
+  canonicalCoverLetter: LooseCanonicalCoverLetterSchema,
+  htmlPreview: z.string().optional(),
+  warnings: z.array(z.union([z.string(), z.object({}).passthrough()])).nullable().optional(),
+}).passthrough();
+export type RawGeneratedCoverLetterResponse = z.infer<typeof RawGeneratedCoverLetterResponseSchema>;
 
 /** Export options */
 export const ExportOptionsSchema = z.object({
