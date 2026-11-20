@@ -63,3 +63,41 @@ export type {
   RawJob,
   JobDetail,
 } from './filter';
+
+// --- Shared resume/cover letter types (Phase 6) ---
+export {
+  GeneratedDocumentTypeSchema,
+  GeneratedDocumentStatusSchema,
+  ResumeTemplateSchema,
+  CoverLetterTemplateSchema,
+  CanonicalResumeSchema,
+  CanonicalCoverLetterSchema,
+  TailorResumeInputSchema,
+  GenerateCoverLetterInputSchema,
+  TailoredResumeResponseSchema,
+  RawTailoredResumeResponseSchema,
+  GeneratedCoverLetterResponseSchema,
+  RawGeneratedCoverLetterResponseSchema,
+  ExportOptionsSchema,
+  GeneratedDocumentViewSchema,
+  ResumeTemplateViewSchema,
+  CoverLetterTemplateViewSchema,
+} from './resumes';
+export type {
+  GeneratedDocumentType,
+  GeneratedDocumentStatus,
+  ResumeTemplate,
+  CoverLetterTemplate,
+  CanonicalResume,
+  CanonicalCoverLetter,
+  TailorResumeInput,
+  GenerateCoverLetterInput,
+  TailoredResumeResponse,
+  RawTailoredResumeResponse,
+  GeneratedCoverLetterResponse,
+  RawGeneratedCoverLetterResponse,
+  ExportOptions,
+  GeneratedDocumentView,
+  ResumeTemplateView,
+  CoverLetterTemplateView,
+} from './resumes';

@@ -10,6 +10,7 @@ import documentsRouter from './modules/documents/document.route';
 import jobsRouter from './modules/jobs/job.route';
 import scrapeRouter from './modules/scraping/scrape.route';
 import aiRouter from './modules/ai/ai.route';
+import { resumeRouter } from './modules/resumes/resume.route';
 import { getEnv } from './config/env';
 
 export function createApp(): Application {
@@ -51,6 +52,9 @@ app.use('/api/scrape', scrapeRouter);
 
 // Protected AI routes (require valid access token).
 app.use('/api/ai', aiRouter);
+
+// Protected resume routes (require valid access token).
+app.use('/api/resumes', resumeRouter);
 
   // Development-only demo endpoint (harmless deterministic fixtures).
   if (env.NODE_ENV === 'development') {
