@@ -4,6 +4,7 @@ import {
 } from 'mongoose';
 import {
   Job,
+  Company,
   type JobSource,
   type JobLocation,
   type JobProvenance,
@@ -29,6 +30,24 @@ import { type JobFilter } from '@jobnavigator/shared';
  * Maximum jobs to save per source per session. Prevents runaway imports.
  */
 const MAX_JOBS_PER_SOURCE = 50;
+
+/** Resolve company name to Company document (create if needed). */
+async function resolveCompany(
+  name?: string,
+): Promise<Types.ObjectId | undefined> {
+  if (!name) return undefined;
+  const normalized = name.trim().toLowerCase();
+  let company = await Company.findOne({ normalizedName: normalized }).exec();
+  if (!company) {
+    company = await Company.create({
+      name: name.trim(),
+      normalizedName: normalized,
+      domains: [],
+      atsIds: [],
+    });
+  }
+  return company._id;
+}
 
 /**
  * Convert a raw job from an adapter into a Job document, applying dedup
@@ -76,9 +95,13 @@ async function upsertJobFromRawImpl(
     retrievalMethod: 'scrape',
   };
 
+  // Resolve company (create if needed)
+  const companyId = await resolveCompany(raw.company);
+
   try {
     const doc = await Job.create({
       ownerId: new Types.ObjectId(ownerId),
+      companyId,
       title: raw.title.trim(),
       normalizedTitle: (raw.title ?? '').trim().toLowerCase(),
       description: raw.description,
@@ -248,6 +271,9 @@ export async function createScrapeSession(
     throw new Error('No supported sources selected');
   }
 
+  // Use filter.limit as batch size (default 10), capped at 50 per source
+  const batchLimit = Math.min(filter.limit ?? 10, 50);
+
   const session = await ScrapeSession.create({
     ownerId: new Types.ObjectId(ownerId),
     filterSnapshot: { ...filter },
@@ -259,6 +285,9 @@ export async function createScrapeSession(
     totalSaved: 0,
     totalSkipped: 0,
     totalFailed: 0,
+    // Pagination: start at offset 0, fetch batchLimit per resume
+    nextOffset: 0,
+    batchLimit,
     startedAt: new Date(),
     cancelRequested: false,
   });
@@ -350,34 +379,45 @@ export async function getScrapeEvents(
 }
 
 /**
- * Run a scrape session to completion (or until cancelled).
+ * Run a scrape session for ONE BATCH (incremental pagination).
  *
  * For each source:
  *   1. Mark source_started
- *   2. Create adapter instance (user-configured identifier or fixture)
- *   3. fetchJobs -> for each job: apply shared filter, dedup, save
- *   4. Update per-source counts
- *   5. Emit progress events
+ *   2. Create adapter instance
+ *   3. fetchJobs with session.nextOffset and session.batchLimit
+ *   4. Process jobs, apply filter, dedup, save
+ *   5. Track if any source hasMore
  *
- * Cooperative cancellation: checks session.cancelRequested between jobs and
- * between sources.
+ * After all sources:
+ *   - If any source hasMore: update nextOffset += batchLimit, status = 'paused'
+ *   - If no source hasMore: status = 'completed'
+ *   - If cancelled: status = 'cancelled'
+ *
+ * Cooperative cancellation: checks session.cancelRequested between jobs and sources.
  */
 export async function runScrapeSession(
   sessionId: string,
   ownerId: string,
   userConfiguredSources: Record<JobSource, { identifier: string; baseUrl?: string }>,
 ): Promise<void> {
-  // Atomically transition status from 'queued' to 'running'. This prevents
-  // concurrent runs of the same session — only the first caller wins.
+  console.log('[Scrape Service] runScrapeSession started:', { sessionId, ownerId, userConfiguredSources });
+
+  // Atomically transition status from 'queued' OR 'paused' to 'running'.
+  // This allows resuming a paused session.
+  // First check if startedAt needs to be set (only on first run from 'queued')
+  const existingDoc = await ScrapeSession.findOne({ _id: sessionId, ownerId }).select('startedAt').exec();
+  const needsStartedAt = existingDoc && !existingDoc.startedAt;
+
   const session = await ScrapeSession.findOneAndUpdate(
     {
       _id: sessionId,
       ownerId: new Types.ObjectId(ownerId),
-      status: 'queued',
+      status: { $in: ['queued', 'paused'] },
     },
     {
       status: 'running',
-      startedAt: new Date(),
+      // startedAt only set on first run (queued -> running)
+      ...(needsStartedAt ? { startedAt: new Date() } : {}),
     },
     { new: true },
   ).exec();
@@ -393,21 +433,29 @@ export async function runScrapeSession(
     throw new Error(`Session is ${existing.status}, cannot run`);
   }
 
+  const currentOffset = session.nextOffset ?? 0;
+  const batchLimit = session.batchLimit ?? 10;
+
+  console.log('[Scrape Service] Resuming session at offset:', { currentOffset, batchLimit });
+
   let totalFetched = 0;
   let totalSaved = 0;
   let totalSkipped = 0;
   let totalFailed = 0;
+  let anySourceHasMore = false;
 
   try {
     for (const source of session.sources) {
       if (await isCancelled(session.id, ownerId)) break;
 
+      console.log('[Scrape Service] Processing source:', { source, sessionId: session.id, offset: currentOffset, limit: batchLimit });
+
       const sourceCount = findSourceCount(session.counts, source)!;
 
       await emitEvent(session.id, ownerId, 'source_started', {
         source,
-        message: `Starting ${source}`,
-        progress: Math.round((totalFetched / Math.max(totalFetched + 1, 1)) * 100),
+        message: `Starting ${source} (offset ${currentOffset})`,
+        progress: 0,
       });
 
       const cfg = userConfiguredSources[source];
@@ -420,6 +468,8 @@ export async function runScrapeSession(
         continue;
       }
 
+      console.log('[Scrape Service] Adapter created for source:', { source, adapterSourceId: adapter.sourceId, configured: adapter.configured });
+
       const filter = session.filterSnapshot as JobFilter;
       const signal = new AbortController().signal;
 
@@ -427,14 +477,25 @@ export async function runScrapeSession(
       if (await isCancelled(session.id, ownerId)) break;
 
       try {
+        console.log('[Scrape Service] Calling adapter.fetchJobs...', { offset: currentOffset, limit: batchLimit });
         const result = await adapter.fetchJobs({
           query: filter.q,
           company: undefined,
           location: filter.locations?.[0],
-          limit: MAX_JOBS_PER_SOURCE,
-          offset: 0,
+          limit: batchLimit,
+          offset: currentOffset,
           signal,
+          filter: filter as unknown as Record<string, unknown>,
         });
+        console.log('[Scrape Service] adapter.fetchJobs returned:', {
+          source,
+          jobCount: result.jobs.length,
+          hasMore: result.hasMore,
+        });
+
+        if (result.hasMore) {
+          anySourceHasMore = true;
+        }
 
         if (await isCancelled(session.id, ownerId)) break;
 
@@ -482,7 +543,7 @@ export async function runScrapeSession(
               jobId: saved.jobId,
               jobTitle: rawJob.title,
               message: `Saved: ${rawJob.title}`,
-              progress: Math.round((totalSaved / MAX_JOBS_PER_SOURCE) * 100),
+              progress: Math.round((totalSaved / batchLimit) * 100),
             });
           } else if (saved.skippedReason === 'duplicate') {
             sourceCount.duplicates += 1;
@@ -507,23 +568,31 @@ export async function runScrapeSession(
       }
     }
 
-    // Finalize.
-    session.totalFetched = totalFetched;
-    session.totalSaved = totalSaved;
-    session.totalSkipped = totalSkipped;
-    session.totalFailed = totalFailed;
+    // Update session with new totals and pagination state
+    session.totalFetched += totalFetched;
+    session.totalSaved += totalSaved;
+    session.totalSkipped += totalSkipped;
+    session.totalFailed += totalFailed;
 
     if (session.cancelRequested) {
       session.status = 'cancelled';
+      session.completedAt = new Date();
+    } else if (anySourceHasMore) {
+      // More jobs available - pause and advance offset for next batch
+      session.status = 'paused';
+      session.nextOffset = currentOffset + batchLimit;
     } else {
+      // No more jobs from any source - complete the session
       session.status = 'completed';
+      session.completedAt = new Date();
     }
-    session.completedAt = new Date();
     await session.save();
 
-    await emitEvent(session.id, ownerId, session.status === 'cancelled' ? 'cancelled' : 'complete', {
-      message: `Scrape ${session.status}: ${totalSaved} saved, ${totalFailed} failed`,
-      progress: 100,
+    const finalStatus = session.status === 'cancelled' ? 'cancelled' : (session.status === 'paused' ? 'progress' : 'complete');
+    await emitEvent(session.id, ownerId, finalStatus, {
+      message: `Batch ${session.status}: ${totalSaved} saved, ${totalFailed} failed${session.status === 'paused' ? `, next offset: ${session.nextOffset}` : ''}`,
+      progress: session.status === 'paused' ? 50 : 100,
+      counts: session.counts,
     });
   } catch (err) {
     session.status = 'failed';

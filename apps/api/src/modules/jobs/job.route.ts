@@ -7,6 +7,7 @@ import {
   addJob,
   importJobs,
   setUserJob,
+  deleteJob,
   type NewJobInput,
   type ImportResult,
   type UserJobUpdate,
@@ -230,6 +231,25 @@ jobsRouter.patch(
         return;
       }
       res.status(200).json({ stage: updated.stage });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// DELETE /api/jobs/:id — delete a job
+jobsRouter.delete(
+  '/:id',
+  requireAuth,
+  async (req, res, next) => {
+    try {
+      const ownerId = (req as { user?: { id: string } }).user!.id;
+      const deleted = await deleteJob(ownerId, req.params.id);
+      if (!deleted) {
+        res.status(404).json({ error: 'not_found', message: 'Job not found' });
+        return;
+      }
+      res.status(204).send();
     } catch (err) {
       next(err);
     }

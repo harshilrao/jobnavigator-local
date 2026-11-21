@@ -1,0 +1,5 @@
+# JobSpy worker dependencies
+# Pin to tested versions
+python-jobspy==1.4.1
+pydantic==2.8.2
+pydantic-settings==2.16.3

@@ -1,6 +1,6 @@
-import type { JobFilter } from '@jobnavigator/shared';
+import type { JobFilter, SourceCapabilityStatus } from '@jobnavigator/shared';
 
-export type { JobFilter } from '@jobnavigator/shared';
+export type { JobFilter, SourceCapabilityStatus } from '@jobnavigator/shared';
 
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? 'http://localhost:3000';
 
@@ -218,6 +218,12 @@ export async function getJobs(
 
 export async function getJob(id: string, token?: string | null): Promise<JobView> {
   return fetchJson<JobView>(`/api/jobs/${encodeURIComponent(id)}`, undefined, token);
+}
+
+export async function deleteJob(id: string, token?: string | null): Promise<void> {
+  return fetchJson<void>(`/api/jobs/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  }, token);
 }
 
 export interface NewJobInput {
@@ -491,6 +497,9 @@ export interface ScrapeSession {
   totalSaved: number;
   totalSkipped: number;
   totalFailed: number;
+  // Pagination fields for incremental scraping
+  nextOffset: number;
+  batchLimit: number;
   startedAt: string;
   completedAt?: string;
   cancelledAt?: string;
@@ -524,6 +533,7 @@ export interface AdapterDescriptor {
     requiresAuth: boolean;
   };
   configured: boolean;
+  capabilities?: Partial<Record<string, SourceCapabilityStatus>>;
 }
 
 export interface CreateSessionRequest {
@@ -570,6 +580,16 @@ export async function cancelScrapeSession(id: string): Promise<{
 }> {
   return fetchJson(`/api/scrape/sessions/${encodeURIComponent(id)}/cancel`, {
     method: 'POST',
+  }, getAuthToken());
+}
+
+export async function runScrapeSession(
+  id: string,
+  sources?: Record<string, { identifier?: string; baseUrl?: string }>
+): Promise<{ id: string; status: ScrapeSessionStatus }> {
+  return fetchJson(`/api/scrape/sessions/${encodeURIComponent(id)}/run`, {
+    method: 'POST',
+    body: JSON.stringify({ sources: sources ?? {} }),
   }, getAuthToken());
 }
 

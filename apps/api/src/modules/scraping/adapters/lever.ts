@@ -34,6 +34,7 @@ export class LeverAdapter implements ScrapeSourceAdapter {
     respectsRobots: true,
     requiresAuth: false,
   };
+  readonly configured = true; // Always configured when instantiated with company
 
   private readonly company: string;
   private readonly baseUrl: string;

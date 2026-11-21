@@ -34,6 +34,7 @@ export class AshbyAdapter implements ScrapeSourceAdapter {
     respectsRobots: true,
     requiresAuth: false,
   };
+  readonly configured = true; // Always configured when instantiated with jobBoardId
 
   private readonly jobBoardId: string;
   private readonly baseUrl: string;

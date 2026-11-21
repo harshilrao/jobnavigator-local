@@ -2,17 +2,26 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   getJobs,
+  getJob,
+  deleteJob,
   updateUserJob,
   listScrapeSessions,
+  runScrapeSession,
+  getScrapeSession,
   getDocuments,
   scoreJob,
   getJobMatches,
   getCurrentUser,
+  scrapeEventStream,
+  listScrapeSessions as listScrapeSessionsApi,
   type JobView,
   type JobFilter,
   type MatchReportView,
   type DocumentView,
   type AIProviderId,
+  type ScrapeEvent,
+  type ScrapeSession,
+  type StreamController,
 } from '@/lib/api';
 
 interface MatchReportContent {
@@ -36,17 +45,31 @@ export interface User {
   email: string;
 }
 
-const REFRESH_INTERVAL_MS = 4000;
+const DEFAULT_LIMIT = 10;
+
+// Key for persisting active scrape session ID across navigation
+const ACTIVE_SESSION_KEY = 'jn_active_scrape_session';
 
 export function Jobs() {
   const user = getCurrentUser();
   const navigate = useNavigate();
   const [jobs, setJobs] = useState<JobView[]>([]);
   const [total, setTotal] = useState(0);
-  const [filter, setFilter] = useState<JobFilter>({ page: 1, limit: 20, sort: 'createdAt', order: 'desc' });
+  const [filter, setFilter] = useState<JobFilter>({ page: 1, limit: DEFAULT_LIMIT, sort: 'createdAt', order: 'desc' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
+  const [newJobsCount, setNewJobsCount] = useState(0);
+
+  // SSE for real-time job_saved events
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
+    // Restore active session from localStorage on mount
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(ACTIVE_SESSION_KEY);
+    }
+    return null;
+  });
+  const streamRef = useRef<StreamController | null>(null);
 
   // Job detail modal
   const [selectedJob, setSelectedJob] = useState<JobView | null>(null);
@@ -66,7 +89,78 @@ export function Jobs() {
     }
   }, []);
 
-  const fetchJobs = useCallback(async () => {
+  const clearStream = useCallback(() => {
+    streamRef.current?.close();
+    streamRef.current = null;
+  }, []);
+
+  // Subscribe to SSE for the active scrape session
+  const subscribeToActiveSession = useCallback(async () => {
+    try {
+      const data = await listScrapeSessionsApi();
+      const active = data.sessions.find(
+        (s) => s.status === 'queued' || s.status === 'running' || s.status === 'paused',
+      );
+      console.log('[Jobs] subscribeToActiveSession check:', active ? { id: active.id.slice(-8), status: active.status } : 'none', 'activeSessionId:', activeSessionId?.slice(-8));
+      if (active && active.id !== activeSessionId) {
+        console.log('[Jobs] Setting up SSE for session:', active.id.slice(-8));
+        setActiveSessionId(active.id);
+        clearStream();
+        const ctrl = scrapeEventStream(
+          active.id,
+          (event: ScrapeEvent) => {
+            console.log('[Jobs SSE event]', event.type, event.jobId ? event.jobId.slice(-8) : '', event.jobTitle);
+            // When a job is saved, fetch it and prepend to the list
+            if (event.type === 'job_saved' && event.jobId) {
+              // Fetch the full job data and prepend it
+              getJob(event.jobId)
+                .then((fullJob) => {
+                  console.log('[Jobs] job_saved - prepending job:', fullJob.title);
+                  setJobs((prev) => {
+                    // Avoid duplicates
+                    if (prev.some((j) => j.id === fullJob.id)) return prev;
+                    // If on page 1, prepend the new job
+                    if (filter.page === 1) {
+                      return [fullJob, ...prev];
+                    }
+                    // On other pages, just track that new jobs are available
+                    return prev;
+                  });
+                  // Update total count
+                  setTotal((t) => t + 1);
+                  // If not on page 1, increment new jobs counter
+                  if (filter.page !== 1) {
+                    setNewJobsCount((c) => c + 1);
+                  }
+                })
+                .catch(() => {
+                  // Fallback: refetch page 1 if individual fetch fails
+                  if (filter.page === 1) fetchJobsInternal();
+                });
+            }
+            // On job_skipped, just increment total (no new job to show)
+            if (event.type === 'job_skipped') {
+              setTotal((t) => t + 1);
+            }
+          },
+          (err) => {
+            console.warn('[Jobs SSE error]', err);
+          },
+        );
+        streamRef.current = ctrl;
+      } else if (!active && activeSessionId) {
+        // Session ended (completed) - refetch to show all saved jobs
+        console.log('[Jobs] No active session, clearing and refetching');
+        setActiveSessionId(null);
+        clearStream();
+        fetchJobsInternal();
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [activeSessionId, clearStream, filter.page]);
+
+  const fetchJobsInternal = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -80,15 +174,65 @@ export function Jobs() {
     }
   }, [filter]);
 
+  const fetchJobs = useCallback(async () => {
+    await fetchJobsInternal();
+  }, [fetchJobsInternal]);
+
+  // Check if there's a paused scrape session that can be resumed
+  const [loadMoreDisabled, setLoadMoreDisabled] = useState(false);
+
+  const handleLoadMore = useCallback(async () => {
+    if (loading || loadMoreDisabled) return;
+
+    try {
+      setLoading(true);
+
+      // Find the active scrape session (paused = ready for next batch)
+      const data = await listScrapeSessionsApi();
+      const pausedSession = data.sessions.find(
+        (s) => s.status === 'paused',
+      );
+
+      if (pausedSession) {
+        // Resume the scrape session for the next batch
+        await runScrapeSession(pausedSession.id);
+
+        // Poll until the batch completes (status becomes 'paused' or 'completed')
+        let attempts = 0;
+        const maxAttempts = 60; // 60 * 2s = 120s max
+        while (attempts < maxAttempts) {
+          await new Promise((r) => setTimeout(r, 2000));
+          const session = await getScrapeSession(pausedSession.id);
+          if (session && (session.status === 'paused' || session.status === 'completed')) {
+            // Batch done, check if there are more batches available
+            setLoadMoreDisabled(session.status === 'completed');
+            break;
+          }
+          attempts++;
+        }
+      } else {
+        // No paused session - no more incremental scraping available
+        setLoadMoreDisabled(true);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load more jobs.');
+    } finally {
+      setLoading(false);
+      // Refresh the jobs list to show newly scraped jobs
+      fetchJobs();
+    }
+  }, [loading, loadMoreDisabled, fetchJobs]);
+
   // Detect whether a scrape session is running/queued so we can auto-refresh
   // the jobs table as new scrape results are saved.
   useEffect(() => {
     const check = async () => {
       try {
-        const data = await listScrapeSessions();
+        const data = await listScrapeSessionsApi();
         const active = data.sessions.some(
-          (s) => s.status === 'queued' || s.status === 'running',
+          (s) => s.status === 'queued' || s.status === 'running' || s.status === 'paused',
         );
+        console.log('[Jobs] Scrape sessions check:', data.sessions.map(s => ({ id: s.id.slice(-8), status: s.status, saved: s.totalSaved })));
         if (active && !autoRefresh) {
           setAutoRefresh(true);
         } else if (!active && autoRefresh) {
@@ -103,15 +247,48 @@ export function Jobs() {
     return () => clearInterval(id);
   }, [autoRefresh]);
 
+  // Subscribe to SSE for real-time updates
+  useEffect(() => {
+    subscribeToActiveSession();
+    const interval = setInterval(subscribeToActiveSession, 5000);
+    return () => {
+      clearInterval(interval);
+      clearStream();
+    };
+  }, [subscribeToActiveSession, clearStream]);
+
+  // Persist active session ID when it changes
+  useEffect(() => {
+    if (typeof localStorage !== 'undefined') {
+      if (activeSessionId) {
+        localStorage.setItem(ACTIVE_SESSION_KEY, activeSessionId);
+      } else {
+        localStorage.removeItem(ACTIVE_SESSION_KEY);
+      }
+    }
+  }, [activeSessionId]);
+
   // Load jobs on mount and whenever the filter changes.
   useEffect(() => {
     clearPoll();
     fetchJobs();
     if (autoRefresh) {
-      pollRef.current = setInterval(fetchJobs, REFRESH_INTERVAL_MS);
+      pollRef.current = setInterval(fetchJobs, 3000); // Faster poll when active
     }
     return () => clearPoll();
   }, [filter, autoRefresh, clearPoll, fetchJobs]);
+
+  // Listen for scrape completion event from Scrape page
+  useEffect(() => {
+    const handleScrapeCompleted = (e: CustomEvent) => {
+      console.log('[Jobs] jn:scrape-completed event received:', e.detail);
+      fetchJobs();
+    };
+    window.addEventListener('jn:scrape-completed', handleScrapeCompleted as EventListener);
+    return () => {
+      window.removeEventListener('jn:scrape-completed', handleScrapeCompleted as EventListener);
+    };
+  }, [fetchJobs]);
 
   // Load resumes when a job is selected.
   useEffect(() => {
@@ -200,6 +377,13 @@ export function Jobs() {
     loadMatches();
   }, [selectedJob]);
 
+  // Reset new jobs counter when navigating to page 1
+  useEffect(() => {
+    if (filter.page === 1) {
+      setNewJobsCount(0);
+    }
+  }, [filter.page]);
+
   if (!user) return null;
 
   return (
@@ -212,6 +396,15 @@ export function Jobs() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {newJobsCount > 0 && filter.page !== 1 && (
+            <button
+              onClick={() => setFilter((f) => ({ ...f, page: 1 }))}
+              className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-[10px] font-semibold text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition"
+            >
+              <span>↑</span>
+              <span>{newJobsCount} new job{newJobsCount > 1 ? 's' : ''} on page 1</span>
+            </button>
+          )}
           <button
             onClick={handleRefresh}
             disabled={loading}
@@ -339,11 +532,41 @@ export function Jobs() {
                       >
                         Details
                       </button>
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          if (!window.confirm('Delete this job? This cannot be undone.')) return;
+                          try {
+                            await deleteJob(job.id);
+                            setJobs((prev) => prev.filter((j) => j.id !== job.id));
+                            setTotal((prev) => prev - 1);
+                          } catch (err) {
+                            console.error('Failed to delete job:', err);
+                            alert('Failed to delete job');
+                          }
+                        }}
+                        className="ml-2 px-2.5 py-1 rounded text-xs font-semibold bg-red-600 text-white hover:bg-red-700 transition"
+                      >
+                        Delete
+                      </button>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            {/* Pagination - Load more (triggers incremental scrape) */}
+            <div className="mt-4 flex items-center justify-between">
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Showing {jobs.length} of {total} job(s)
+              </p>
+              <button
+                onClick={handleLoadMore}
+                disabled={loading || loadMoreDisabled}
+                className="px-4 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+              >
+                {loading ? 'Loading…' : loadMoreDisabled ? 'No more jobs' : 'Load more'}
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -357,9 +580,16 @@ export function Jobs() {
           />
           <div className="relative w-full max-w-2xl bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-lg max-h-[90vh] flex flex-col">
             <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
-              <h3 className="text-base font-semibold text-slate-700 dark:text-slate-200">
-                {selectedJob.title}
-              </h3>
+              <div>
+                <h3 className="text-base font-semibold text-slate-700 dark:text-slate-200">
+                  {selectedJob.title}
+                </h3>
+                {selectedJob.companyName && (
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    {selectedJob.companyName}
+                  </p>
+                )}
+              </div>
               <button
                 onClick={closeJobDetail}
                 className="rounded p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition"
@@ -472,6 +702,11 @@ export function Jobs() {
                             {matches[0].provider} · {matches[0].model}
                           </span>
                         </div>
+                        {selectedJob.companyName && (
+                          <p className="text-xs text-slate-400 dark:text-slate-500 mb-2">
+                            {selectedJob.companyName}
+                          </p>
+                        )}
 
                         {(() => {
                           const content = matches[0].matchReport as MatchReportContent;
@@ -525,6 +760,24 @@ export function Jobs() {
                               </div>
                             );
                           })()}
+                          {(() => {
+                            const content = matches[0].matchReport as MatchReportContent;
+                            if (!Array.isArray(content.relevantKeywords)) return null;
+                            return (
+                              <div className="mb-3">
+                                <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase mb-1">
+                                  Relevant keywords
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {content.relevantKeywords.map((kw, i) => (
+                                    <span key={i} className="px-2 py-0.5 text-[10px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded border border-slate-200 dark:border-slate-700">
+                                      {kw}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
 
                         {(() => {
@@ -540,6 +793,20 @@ export function Jobs() {
                                   <li key={i}>{s}</li>
                                 ))}
                               </ul>
+                            </div>
+                          );
+                        })()}
+                        {(() => {
+                          const content = matches[0].matchReport as MatchReportContent;
+                          if (typeof content.rubric !== 'string' || !content.rubric) return null;
+                          return (
+                            <div className="mt-3 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-slate-700">
+                              <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase mb-1">
+                                Scoring rubric
+                              </div>
+                              <div className="text-xs text-slate-600 dark:text-slate-300 whitespace-pre-wrap">
+                                {content.rubric}
+                              </div>
                             </div>
                           );
                         })()}

@@ -74,9 +74,10 @@ scrapeRouter.post(
   },
 );
 
-// POST /api/scrape/sessions/:id/run — start a queued scrape session.
+// POST /api/scrape/sessions/:id/run — start/resume a scrape session.
 // Runs in the background; progress is delivered through SSE events and the
 // session status/counts fields, which the client polls or streams.
+// Accepts both 'queued' (first run) and 'paused' (resume for next batch).
 scrapeRouter.post(
   '/sessions/:id/run',
   requireAuth,
@@ -88,7 +89,7 @@ scrapeRouter.post(
         res.status(404).json({ error: 'not_found', message: 'Session not found' });
         return;
       }
-      if (session.status !== 'queued') {
+      if (session.status !== 'queued' && session.status !== 'paused') {
         res.status(400).json({
           error: 'invalid_status',
           message: `Session is ${session.status}, cannot run`,
@@ -141,6 +142,9 @@ scrapeRouter.get(
         totalSaved: session.totalSaved,
         totalSkipped: session.totalSkipped,
         totalFailed: session.totalFailed,
+        // Pagination fields
+        nextOffset: session.nextOffset,
+        batchLimit: session.batchLimit,
         startedAt: session.startedAt,
         completedAt: session.completedAt,
         cancelledAt: session.cancelledAt,
@@ -256,6 +260,9 @@ scrapeRouter.get(
           totalSaved: s.totalSaved,
           totalSkipped: s.totalSkipped,
           totalFailed: s.totalFailed,
+          // Pagination fields
+          nextOffset: s.nextOffset,
+          batchLimit: s.batchLimit,
           startedAt: s.startedAt,
           completedAt: s.completedAt,
           cancelRequested: s.cancelRequested,

@@ -9,6 +9,10 @@ export type JobSource =
   | 'lever'
   | 'ashby'
   | 'smartrecruiters'
+  | 'linkedin'
+  | 'indeed'
+  | 'glassdoor'
+  | 'zip_recruiter'
   | 'other';
 
 export type RemoteType = 'remote' | 'hybrid' | 'onsite' | 'unspecified';
@@ -127,6 +131,10 @@ const jobProvenanceSchema = new Schema<JobProvenance>({
       'lever',
       'ashby',
       'smartrecruiters',
+      'linkedin',
+      'indeed',
+      'glassdoor',
+      'zip_recruiter',
       'other',
     ],
     required: true,

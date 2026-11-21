@@ -34,6 +34,7 @@ export class GreenhouseAdapter implements ScrapeSourceAdapter {
     respectsRobots: true,
     requiresAuth: false,
   };
+  readonly configured = true; // Always configured when instantiated with boardId
 
   private readonly boardId: string;
   private readonly baseUrl: string;

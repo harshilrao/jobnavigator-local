@@ -34,6 +34,7 @@ export class SmartRecruitersAdapter implements ScrapeSourceAdapter {
     respectsRobots: true,
     requiresAuth: false,
   };
+  readonly configured = true; // Always configured when instantiated with companyId
 
   private readonly companyId: string;
   private readonly baseUrl: string;

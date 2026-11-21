@@ -15,7 +15,7 @@ import {
 } from './ai.provider';
 
 /** Cache TTL in ms — re-score only if resume or JD changed. */
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2'; // bumped for improved prompt v2
 
 /**
  * Score a job against a resume using the configured AI provider.

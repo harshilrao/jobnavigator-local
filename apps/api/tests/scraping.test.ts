@@ -89,12 +89,16 @@ dbDescribe('Phase 4: Scraping adapters (fixture servers)', () => {
   });
 
   it('reports source support', () => {
+    // Phase 4 ATS adapters
     expect(isSourceSupported('greenhouse')).toBe(true);
     expect(isSourceSupported('lever')).toBe(true);
     expect(isSourceSupported('ashby')).toBe(true);
     expect(isSourceSupported('smartrecruiters')).toBe(true);
-    expect(isSourceSupported('linkedin')).toBe(false);
-    expect(isSourceSupported('indeed')).toBe(false);
+    // Phase 6A JobSpy sources (enabled when venv is set up)
+    expect(isSourceSupported('linkedin')).toBe(true);
+    expect(isSourceSupported('indeed')).toBe(true);
+    expect(isSourceSupported('glassdoor')).toBe(true);
+    expect(isSourceSupported('zip_recruiter')).toBe(true);
   });
 
   it('creates a Greenhouse adapter pointing at fixture server', () => {

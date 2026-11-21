@@ -483,3 +483,23 @@ export async function getUserJob(
     jobId: new Types.ObjectId(jobId),
   }).exec();
 }
+
+/** Delete a job (only if owned by the user). Also removes the UserJob link. */
+export async function deleteJob(
+  ownerId: string,
+  jobId: string,
+): Promise<boolean> {
+  if (!Types.ObjectId.isValid(jobId)) return false;
+  const result = await Job.deleteOne({
+    _id: jobId,
+    ownerId: new Types.ObjectId(ownerId),
+  }).exec();
+  if (result.deletedCount > 0) {
+    await UserJob.deleteOne({
+      ownerId: new Types.ObjectId(ownerId),
+      jobId: new Types.ObjectId(jobId),
+    }).exec();
+    return true;
+  }
+  return false;
+}

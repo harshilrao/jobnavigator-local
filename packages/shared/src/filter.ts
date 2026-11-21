@@ -13,19 +13,6 @@ export const JobFilterSchema = z.object({
   remoteType: z
     .enum(['remote', 'hybrid', 'onsite', 'unspecified'])
     .optional(),
-  seniority: z
-    .enum(['intern', 'entry', 'mid', 'senior', 'lead', 'unspecified'])
-    .optional(),
-  employmentType: z
-    .enum([
-      'full-time',
-      'part-time',
-      'contract',
-      'temporary',
-      'freelance',
-      'unspecified',
-    ])
-    .optional(),
   descriptionStatus: z
     .enum(['complete', 'partial', 'missing', 'blocked', 'closed'])
     .optional(),
@@ -41,22 +28,63 @@ export const JobFilterSchema = z.object({
   limit: z.coerce.number().min(1).max(100).default(20),
   sort: z.enum(['createdAt', 'title']).default('createdAt'),
   order: z.enum(['asc', 'desc']).default('desc'),
+  // Phase 6A: JobSpy-specific filter extensions
+  experienceLevel: z.enum(['0-1', '1-2', '2-3', '3-5', '5+']).optional(),
+  workArrangement: z.enum(['remote', 'hybrid', 'onsite']).optional(),
+  postedWithinHours: z.number().int().positive().optional(),
+  country: z.enum(['USA', 'CAN', 'GBR', 'AUS', 'DEU', 'FRA', 'IND', 'BRA', 'MEX', 'ESP', 'ITA', 'NLD', 'POL', 'CHE', 'SWE', 'NOR', 'DNK', 'FIN', 'AUT', 'BEL', 'IRL', 'PRT', 'SGP', 'HKG', 'JPN', 'KOR', 'NZL', 'ZAF', 'ARE', 'ISR', 'TUR', 'CHN']).optional(),
+  provinceState: z.string().optional(), // Province/state for CA/US
+  jobType: z.enum(['fulltime', 'parttime', 'contract', 'internship', 'temporary']).optional(),
+  easyApply: z.boolean().optional(),
+  radiusKm: z.number().int().positive().optional(),
+  // Exclusion terms (local post-filter, not source-native)
+  excludeKeywords: z.string().optional(),
+  excludeCompanies: z.string().optional(),
+  // Seniority (for ATS sources, separate from JobSpy experienceLevel)
+  seniority: z.enum(['intern', 'entry', 'mid', 'senior', 'lead', 'unspecified']).optional(),
+  // Employment type (for ATS sources, separate from JobSpy jobType)
+  employmentType: z.enum(['full-time', 'part-time', 'contract', 'temporary', 'freelance', 'unspecified']).optional(),
 });
 
 export type JobFilter = z.infer<typeof JobFilterSchema>;
 
 export type ParsedJobFilter = z.infer<typeof JobFilterSchema>;
 
-/** Provider adapter contract used by Phase 4 scraping. */
+/** Provider adapter contract used by Phase 4 scraping + Phase 6A JobSpy sources. */
 export const ScrapeSourceSchema = z.enum([
+  // Phase 4 ATS adapters
   'greenhouse',
   'lever',
   'ashby',
   'smartrecruiters',
   'other',
+  // Phase 6A JobSpy aggregator sources
+  'linkedin',
+  'indeed',
+  'glassdoor',
+  'zip_recruiter',
 ]);
 
 export type ScrapeSource = z.infer<typeof ScrapeSourceSchema>;
+
+/** JobSpy-specific filter extensions */
+export const JobSpyFilterSchema = z.object({
+  // Experience level bands
+  experienceLevel: z.enum(['0-1', '1-2', '2-3', '3-5', '5+']).optional(),
+  // Work arrangement (JobSpy specific)
+  workArrangement: z.enum(['remote', 'hybrid', 'onsite']).optional(),
+  // Date posted range (JobSpy uses hours_old)
+  postedWithinHours: z.number().int().positive().optional(),
+  // Country for Indeed/Glassdoor
+  country: z.enum(['USA', 'CAN', 'GBR', 'AUS', 'DEU', 'FRA', 'IND', 'BRA', 'MEX', 'ESP', 'ITA', 'NLD', 'POL', 'CHE', 'SWE', 'NOR', 'DNK', 'FIN', 'AUT', 'BEL', 'IRL', 'PRT', 'SGP', 'HKG', 'JPN', 'KOR', 'NZL', 'ZAF', 'ARE', 'ISR', 'TUR', 'CHN']).optional(),
+  // Job type
+  jobType: z.enum(['fulltime', 'parttime', 'contract', 'internship', 'temporary']).optional(),
+  // Easy apply filter
+  easyApply: z.boolean().optional(),
+  // Radius (km) - only if reliable
+  radiusKm: z.number().int().positive().optional(),
+});
+export type JobSpyFilter = z.infer<typeof JobSpyFilterSchema>;
 
 export interface SourcePolicies {
   rateLimitMs: number;
@@ -66,6 +94,27 @@ export interface SourcePolicies {
   requiresAuth: boolean;
 }
 
+/** Per-source capability status for UI display */
+export type SourceCapabilityStatus = 'supported' | 'limited' | 'unavailable' | 'manual';
+
+export interface SourceCapability {
+  query: SourceCapabilityStatus;
+  company: SourceCapabilityStatus;
+  location: SourceCapabilityStatus;
+  experienceLevel: SourceCapabilityStatus;
+  workArrangement: SourceCapabilityStatus;
+  postedWithinHours: SourceCapabilityStatus;
+  country: SourceCapabilityStatus;
+  provinceState: SourceCapabilityStatus;
+  jobType: SourceCapabilityStatus;
+  easyApply: SourceCapabilityStatus;
+  radiusKm: SourceCapabilityStatus;
+  seniority: SourceCapabilityStatus;
+  employmentType: SourceCapabilityStatus;
+  excludeKeywords: SourceCapabilityStatus;
+  excludeCompanies: SourceCapabilityStatus;
+}
+
 /** Lightweight descriptor for UI listing (no fetch methods). */
 export interface ScrapeSourceDescriptor {
   sourceId: ScrapeSource;
@@ -73,6 +122,8 @@ export interface ScrapeSourceDescriptor {
   supportsCompany: boolean;
   supportsLocation: boolean;
   sourcePolicies: SourcePolicies;
+  configured: boolean; // true if user has supplied a real board/company ID
+  capabilities?: Partial<SourceCapability>; // Per-filter capability for UI
 }
 
 /** Full provider adapter contract (includes fetchJobs/fetchDetail). */
@@ -88,6 +139,8 @@ export interface FetchJobsParams {
   limit?: number;
   offset?: number;
   signal: AbortSignal;
+  /** Full filter snapshot from the scrape session (for advanced source-specific filters) */
+  filter?: Record<string, unknown>;
 }
 
 export interface RawJob {

@@ -53,15 +53,19 @@ export const demoCheck = (input: unknown): DemoResponse => {
 
 // --- Shared job filter (single source of truth for API + web) ---
 export { JobFilterSchema, type JobFilter, type ParsedJobFilter } from './filter';
+export { JobSpyFilterSchema } from './filter';
 export type {
   ScrapeSource,
   ScrapeSourceDescriptor,
   ScrapeSourceAdapter,
   SourcePolicies,
+  SourceCapability,
+  SourceCapabilityStatus,
   FetchJobsParams,
   FetchJobsResult,
   RawJob,
   JobDetail,
+  JobSpyFilter,
 } from './filter';
 
 // --- Shared resume/cover letter types (Phase 6) ---

@@ -44,6 +44,9 @@ export interface ScrapeSessionDoc extends Document {
   totalSaved: number;
   totalSkipped: number;
   totalFailed: number;
+  // Pagination state for incremental scraping
+  nextOffset: number;
+  batchLimit: number;
   startedAt: Date;
   completedAt?: Date;
   cancelledAt?: Date;
@@ -96,6 +99,9 @@ const scrapeSessionSchema = new Schema<ScrapeSessionDoc>(
     totalSaved: { type: Number, default: 0, required: true },
     totalSkipped: { type: Number, default: 0, required: true },
     totalFailed: { type: Number, default: 0, required: true },
+    // Pagination state for incremental scraping
+    nextOffset: { type: Number, default: 0, required: true },
+    batchLimit: { type: Number, default: 10, required: true },
     startedAt: { type: Date, required: true, default: Date.now },
     completedAt: { type: Date },
     cancelledAt: { type: Date },

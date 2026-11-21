@@ -63,28 +63,39 @@ function buildScoringMessages(resumeText: string, jdText: string): { role: 'syst
 Do not invent degrees, dates, skills, companies, achievements, or work authorizations.
 If evidence is absent, mark status "unknown" or "missing" — never hallucinate.
 
-Return strictly valid JSON matching this exact schema:
+Return ONLY a valid JSON object with EXACTLY these 7 keys (no extra keys, no nesting, no wrapper):
 {
-  "fitSummary": "string - plain-language fit summary",
+  "fitSummary": "string - 2-3 sentence plain-language fit summary",
   "requiredSkills": [
-    {
-      "skill": "string",
-      "requirement": "required" | "preferred",  // per the JD: is this skill required or preferred?
-      "jdEvidence": "string - direct quote from JD mentioning this skill",
-      "resumeEvidence": 'string - direct quote from resume showing this skill, or "missing" if absent',
-      "status": "met" | "partial" | "missing" | "unknown"  // match status: met=resume shows skill, partial=some evidence, missing=not found, unknown=cannot determine
-    }
+    {"skill": "string", "requirement": "required|preferred", "jdEvidence": "string - direct quote from JD", "resumeEvidence": "string - direct quote from resume or 'missing'", "status": "met|partial|missing|unknown"}
   ],
-  "relevantKeywords": ["string - keywords from JD worth emphasizing"],
-  "cautions": ["string - gaps or mismatches to address"],
-  "suggestedImprovements": ["string - actionable resume improvements"],
-  "matchScore": "number 0-100 - heuristic match score, not an ATS score",
-  "rubric": "string - how the score was calculated"
+  "relevantKeywords": ["string"],
+  "cautions": ["string"],
+  "suggestedImprovements": ["string"],
+  "matchScore": number,
+  "rubric": "string - how score was calculated"
 }
 
-IMPORTANT: "requirement" comes from the JD (required/preferred). "status" comes from comparing resume to JD (met/partial/missing/unknown). Do NOT put "missing" in requirement.
+CRITICAL RULES:
+- Output ONLY the JSON object. No markdown, no code fences, no prose, no wrapper keys like "MatchReport".
+- "requirement" = from JD ("required" or "preferred"). "status" = resume vs JD comparison ("met", "partial", "missing", "unknown").
+- If a skill is not mentioned in resume, use "missing" for resumeEvidence and "missing" for status.
+- matchScore must be a number between 0 and 100.
+- If JD has no clear required skills, use empty array for requiredSkills.
 
-No markdown fences, no extra prose, no comments. Output only the JSON object.`;
+EXAMPLE OUTPUT:
+{
+  "fitSummary": "The candidate has strong backend and Salesforce experience matching the technical requirements. However, the role requires document governance expertise which is not evident in the resume.",
+  "requiredSkills": [
+    {"skill": "Salesforce Apex", "requirement": "required", "jdEvidence": "Experience with Salesforce Apex development", "resumeEvidence": "Developed and maintained Apex classes, SOQL queries", "status": "met"},
+    {"skill": "Information Governance", "requirement": "required", "jdEvidence": "Experience in document and information management", "resumeEvidence": "missing", "status": "missing"}
+  ],
+  "relevantKeywords": ["Salesforce", "Apex", "LWC", "SOQL", "AWS", "MongoDB"],
+  "cautions": ["No documented experience with document governance platforms (SharePoint, OpenText, RecordPoint)"],
+  "suggestedImprovements": ["Add any experience with ECM platforms", "Highlight information lifecycle management projects"],
+  "matchScore": 55,
+  "rubric": "Met 1 of 2 required skills (50%), plus relevant technical keywords. Missing core domain expertise for this role."
+}`;
   const user = `RESUME:
 ---
 ${resumeText}
@@ -93,7 +104,7 @@ JOB DESCRIPTION:
 ---
 ${sanitizeJDText(jdText)}
 
-Produce a structured match report.`;
+Produce the match report JSON now.`;
   return [
     { role: 'system', content: system },
     { role: 'user', content: user },
@@ -214,19 +225,38 @@ export class OllamaProvider implements AIProvider {
       console.log('[Ollama] raw response content (first 1000 chars):', content.slice(0, 1000));
       console.log('[Ollama] raw response content (last 500 chars):', content.slice(-500));
 
-      // Check if response looks like valid JSON
-      let isValidJson = false;
-      let parsedContent: unknown = null;
-      try {
-        parsedContent = JSON.parse(content);
-        isValidJson = true;
-        console.log('[Ollama] response is VALID JSON');
-        console.log('[Ollama] parsed JSON keys:', Object.keys(parsedContent as object));
-      } catch (jsonErr) {
-        console.log('[Ollama] response is NOT valid JSON (string or malformed)');
-        console.log('[Ollama] JSON parse error:', jsonErr);
+      // Try immediate extraction and validation (handles wrapped responses)
+      function tryExtractAndValidate(jsonStr: string): T | null {
+        try {
+          const parsed = JSON.parse(jsonStr);
+          console.log('[Ollama] JSON parsed, keys:', Object.keys(parsed));
+
+          // Check if it's a wrapped response (single key with object value containing our fields)
+          const keys = Object.keys(parsed);
+          if (keys.length === 1 && typeof parsed[keys[0]] === 'object' && parsed[keys[0]] !== null) {
+            const inner = parsed[keys[0]];
+            console.log('[Ollama] Detected wrapped response, trying inner object:', Object.keys(inner));
+            try {
+              return schema.parse(inner);
+            } catch {
+              // Inner didn't match, try the outer
+            }
+          }
+
+          // Try direct validation
+          return schema.parse(parsed);
+        } catch {
+          return null;
+        }
       }
 
+      const immediate = tryExtractAndValidate(content);
+      if (immediate) {
+        console.log('[Ollama] Schema validation PASSED immediately');
+        return immediate;
+      }
+
+      console.log('[Ollama] Direct validation failed, attempting repair...');
       return this.parseAndRepair(content, schema);
     } catch (err) {
       clearTimeout(timeout);
@@ -240,70 +270,101 @@ export class OllamaProvider implements AIProvider {
     console.log('[Ollama] content length:', content.length);
     console.log('[Ollama] content preview (first 500):', content.slice(0, 500));
 
-    // Attempt 1: parse directly.
-    try {
-      const parsed = JSON.parse(content);
-      console.log('[Ollama] JSON parsed successfully, validating against schema...');
-      const result = schema.parse(parsed);
-      console.log('[Ollama] Schema validation PASSED');
-      return result;
-    } catch (parseErr) {
-      console.log('[Ollama] Direct parse/validation FAILED:', parseErr);
-      console.log('[Ollama] ===== parseAndRepair ATTEMPT 2: Bounded repair =====');
-
-      // Attempt 2: bounded repair — ask model to re-emit clean JSON using direct fetch
-      // (avoids infinite recursion through structuredChat -> parseAndRepair)
-      const repairPrompt = `The previous response was invalid JSON. Re-emit valid JSON only matching the schema:
-${content.slice(0, 2000)}`;
-
-      const payload: Record<string, unknown> = {
-        model: this.model,
-        messages: [
-          { role: 'system', content: 'Return only valid JSON matching the schema. No prose.' },
-          { role: 'user', content: repairPrompt },
-        ],
-        stream: false,
-        format: 'json',
-        repeat_penalty: 1.1,
-      };
-
-      console.log('[Ollama] Repair payload:', JSON.stringify(payload, null, 2));
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 180000);
+    // Helper to try extracting valid object from various wrapped formats
+    function tryExtractAndValidate(jsonStr: string): T | null {
       try {
-        const res = await fetch(`${this.baseUrl}/api/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
-        if (!res.ok) {
-          throw new Error(`Ollama repair returned HTTP ${res.status}`);
-        }
-        const data = await res.json();
-        const repairContent = data.message?.content ?? '';
+        const parsed = JSON.parse(jsonStr);
+        console.log('[Ollama] JSON parsed, keys:', Object.keys(parsed));
 
-        console.log('[Ollama] Repair response status:', res.status);
-        console.log('[Ollama] Repair response content length:', repairContent.length);
-        console.log('[Ollama] Repair response content (first 1000):', repairContent.slice(0, 1000));
-
-        let isValidJson = false;
-        try {
-          const parsed = JSON.parse(repairContent);
-          isValidJson = true;
-          console.log('[Ollama] Repair response is VALID JSON');
-          console.log('[Ollama] Repair parsed keys:', Object.keys(parsed));
-        } catch {
-          console.log('[Ollama] Repair response is NOT valid JSON');
+        // Check if it's a wrapped response (single key with object value containing our fields)
+        const keys = Object.keys(parsed);
+        if (keys.length === 1 && typeof parsed[keys[0]] === 'object' && parsed[keys[0]] !== null) {
+          const inner = parsed[keys[0]];
+          console.log('[Ollama] Detected wrapped response, trying inner object:', Object.keys(inner));
+          try {
+            return schema.parse(inner);
+          } catch {
+            // Inner didn't match, try the outer
+          }
         }
 
-        return schema.parse(JSON.parse(repairContent));
-      } catch (repairErr) {
-        clearTimeout(timeout);
-        console.error('[Ollama] parseAndRepair failed:', repairErr);
-        throw parseErr; // Throw original parse error
+        // Try direct validation
+        return schema.parse(parsed);
+      } catch {
+        return null;
       }
+    }
+
+    // Attempt 1: parse directly with extraction
+    const attempt1 = tryExtractAndValidate(content);
+    if (attempt1) {
+      console.log('[Ollama] Schema validation PASSED on attempt 1');
+      return attempt1;
+    }
+
+    console.log('[Ollama] Direct parse/validation FAILED');
+    console.log('[Ollama] ===== parseAndRepair ATTEMPT 2: Bounded repair =====');
+
+    // Attempt 2: bounded repair — ask model to re-emit clean JSON using direct fetch
+    // (avoids infinite recursion through structuredChat -> parseAndRepair)
+    const repairPrompt = `The previous response was not in the expected format. Return ONLY a JSON object with exactly these keys: fitSummary, requiredSkills, relevantKeywords, cautions, suggestedImprovements, matchScore, rubric. No wrapper keys, no markdown, no prose.`;
+
+    const payload: Record<string, unknown> = {
+      model: this.model,
+      messages: [
+        { role: 'system', content: 'Return only valid JSON matching the schema. No prose. No wrapper keys.' },
+        { role: 'user', content: repairPrompt },
+      ],
+      stream: false,
+      format: 'json',
+      repeat_penalty: 1.1,
+    };
+
+    console.log('[Ollama] Repair payload:', JSON.stringify(payload, null, 2));
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 180000);
+    try {
+      const res = await fetch(`${this.baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!res.ok) {
+        throw new Error(`Ollama repair returned HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      const repairContent = data.message?.content ?? '';
+
+      console.log('[Ollama] Repair response status:', res.status);
+      console.log('[Ollama] Repair response content length:', repairContent.length);
+      console.log('[Ollama] Repair response content (first 1000):', repairContent.slice(0, 1000));
+
+      const attempt2 = tryExtractAndValidate(repairContent);
+      if (attempt2) {
+        console.log('[Ollama] Schema validation PASSED on repair attempt');
+        return attempt2;
+      }
+
+      console.log('[Ollama] Repair response also failed validation');
+      throw new Error('Both direct parse and repair failed to produce valid schema');
+    } catch (repairErr) {
+      clearTimeout(timeout);
+      console.error('[Ollama] parseAndRepair failed:', repairErr);
+      // Try one more time: attempt to manually construct a minimal valid response from the content
+      try {
+        const parsed = JSON.parse(content);
+        const keys = Object.keys(parsed);
+        if (keys.length === 1 && typeof parsed[keys[0]] === 'object') {
+          console.log('[Ollama] Last resort: attempting to use inner object despite validation errors');
+          // This will throw if still invalid, but at least we tried
+          return schema.parse(parsed[keys[0]]);
+        }
+      } catch {
+        // Ignore
+      }
+      throw repairErr;
     }
   }
 

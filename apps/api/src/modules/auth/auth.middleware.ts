@@ -16,18 +16,15 @@ function extractToken(req: Request): string | null {
 export const requireAuth: RequestHandler = (req, _res, next) => {
   try {
     const token = extractToken(req);
-    console.log('[Auth] requireAuth', { path: req.path, hasToken: !!token, tokenPrefix: token?.slice(0, 20) });
     if (!token) {
       const err: Error & { statusCode?: number } = new Error('Authentication required');
       err.statusCode = 401;
       return next(err);
     }
     const payload = verifyAccessToken(token);
-    console.log('[Auth] Token verified', { sub: payload.sub, email: payload.email });
     (req as AuthenticatedRequest).user = { id: payload.sub, email: payload.email, role: payload.role ?? 'owner' };
     next();
   } catch (e) {
-    console.error('[Auth] Token verification failed:', e);
     const err: Error & { statusCode?: number } = new Error('Invalid or expired access token');
     err.statusCode = 401;
     next(err);
