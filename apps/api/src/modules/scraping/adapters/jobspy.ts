@@ -80,6 +80,22 @@ type BridgeJob = JobSpyWorkerOutput['jobs'][number];
 
 /** Convert bridge job to RawJob (handle salary type differences) */
 function toRawJob(job: BridgeJob): RawJob {
+  // job.jobType is string | null | undefined - filter to valid enum
+  const validJobTypes = ['fulltime', 'parttime', 'contract', 'internship', 'temporary'] as const;
+  type ValidJobType = typeof validJobTypes[number];
+
+  let jobType: ValidJobType | undefined;
+  if (job.jobType && validJobTypes.includes(job.jobType as ValidJobType)) {
+    jobType = job.jobType as ValidJobType;
+  }
+
+  // Compute workArrangement from isRemote if not directly provided
+  const workArrangement: 'remote' | 'hybrid' | 'onsite' | undefined =
+    job.isRemote === true ? 'remote' : job.isRemote === false ? 'onsite' : undefined;
+
+  // emails is string[] | null | undefined - filter null
+  const emails = job.emails && job.emails.length > 0 ? job.emails : undefined;
+
   return {
     sourceJobId: job.sourceJobId,
     title: job.title,
@@ -95,6 +111,11 @@ function toRawJob(job: BridgeJob): RawJob {
       period: job.salary.period,
     } : undefined,
     postedAt: job.postedAt ? new Date(job.postedAt) : undefined,
+    // Phase 6A: JobSpy-specific fields
+    jobType,
+    workArrangement,
+    isRemote: job.isRemote ?? undefined,
+    emails,
   };
 }
 
@@ -123,8 +144,10 @@ export function createJobSpyAdapter(enabledSources: JobSpySource[] = ['linkedin'
       console.log('[JobSpy Adapter] Filter snapshot from session:', filter);
 
       // Map our params to JobSpy worker input
-      // Default fetchDescription to false for speed; descriptions add ~10-30s per job on LinkedIn
-      const fetchDescription = params.limit ? params.limit <= 5 : undefined; // Only fetch for very small batches, otherwise skip
+      // Default fetchDescription to true so users get descriptions by default;
+      // descriptions add ~10-30s per job on LinkedIn but provide valuable data
+      // Use filter.fetchDescription from session snapshot if explicitly set
+      const fetchDescription = filter.fetchDescription !== false;
       const workerInput: JobSpyWorkerInput = {
         sources: enabledSources,
         query: params.query,
@@ -132,7 +155,7 @@ export function createJobSpyAdapter(enabledSources: JobSpySource[] = ['linkedin'
         country: (filter.country as string) || undefined,
         resultsWanted: params.limit ?? 10,
         offset: params.offset ?? 0,
-        fetchDescription: false, // Default disabled - enable via UI if needed
+        fetchDescription,
         hoursOld: (filter.postedWithinHours as number) || undefined,
         jobType: (filter.jobType as JobSpyJobType) || undefined,
         remote: filter.workArrangement === 'remote' ? true : filter.workArrangement === 'onsite' ? false : undefined,

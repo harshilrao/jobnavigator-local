@@ -5,6 +5,19 @@ import { existsSync } from 'node:fs';
 import { z } from 'zod';
 import { getEnv } from '../../config/env';
 
+/** Terminate a process tree on Windows using taskkill /T */
+async function killProcessTreeOnWindows(pid: number): Promise<void> {
+  if (process.platform !== 'win32') return;
+  return new Promise((resolve) => {
+    const proc = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
+      windowsHide: true,
+    });
+    proc.on('exit', () => resolve());
+    // Fallback timeout
+    setTimeout(resolve, 1000);
+  });
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -282,13 +295,22 @@ class JobSpyWorkerManager {
   /** Terminate the worker process */
   async terminate(): Promise<void> {
     if (this.worker && !this.worker.closed) {
+      const pid = this.worker.proc.pid;
       this.worker.closed = true;
-      this.worker.proc.kill('SIGTERM');
-      // Wait a bit for graceful exit
-      await new Promise(resolve => setTimeout(resolve, 500));
-      if (!this.worker.proc.killed) {
-        this.worker.proc.kill('SIGKILL');
+      console.log('[JobSpy Bridge] Terminating worker process:', { pid });
+
+      // On Windows, use taskkill /T to kill the entire process tree
+      if (process.platform === 'win32' && pid) {
+        await killProcessTreeOnWindows(pid);
+      } else {
+        // Unix: SIGTERM then SIGKILL
+        this.worker.proc.kill('SIGTERM');
+        await new Promise(resolve => setTimeout(resolve, 500));
+        if (!this.worker.proc.killed) {
+          this.worker.proc.kill('SIGKILL');
+        }
       }
+
       this.worker = null;
     }
   }

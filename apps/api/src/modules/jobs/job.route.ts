@@ -8,6 +8,7 @@ import {
   importJobs,
   setUserJob,
   deleteJob,
+  deleteAllJobs,
   type NewJobInput,
   type ImportResult,
   type UserJobUpdate,
@@ -250,6 +251,21 @@ jobsRouter.delete(
         return;
       }
       res.status(204).send();
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// DELETE /api/jobs — delete ALL jobs for the user
+jobsRouter.delete(
+  '/',
+  requireAuth,
+  async (req, res, next) => {
+    try {
+      const ownerId = (req as { user?: { id: string } }).user!.id;
+      const deletedCount = await deleteAllJobs(ownerId);
+      res.status(200).json({ deleted: deletedCount });
     } catch (err) {
       next(err);
     }

@@ -179,6 +179,19 @@ export interface JobView {
   isClosed: boolean;
   savedState: 'saved' | 'ignored' | 'viewed' | 'none';
   aiScore?: number;
+
+  // Phase 6A: JobSpy-specific fields (may be unavailable for some sources)
+  jobType?: 'fulltime' | 'parttime' | 'contract' | 'internship' | 'temporary';
+  workArrangement?: 'remote' | 'hybrid' | 'onsite';
+  postedAt?: string;
+  emails?: string[];
+  // Extracted/derived fields from description (clearly labelled as derived)
+  derivedSkills?: string[];
+  derivedExperienceYears?: string;
+  derivedEducation?: string;
+  derivedBenefits?: string[];
+  derivedRequirements?: string[];
+
   createdAt: string;
   updatedAt: string;
 }
@@ -222,6 +235,12 @@ export async function getJob(id: string, token?: string | null): Promise<JobView
 
 export async function deleteJob(id: string, token?: string | null): Promise<void> {
   return fetchJson<void>(`/api/jobs/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  }, token);
+}
+
+export async function deleteAllJobs(token?: string | null): Promise<{ deleted: number }> {
+  return fetchJson<{ deleted: number }>('/api/jobs', {
     method: 'DELETE',
   }, token);
 }
@@ -517,6 +536,8 @@ export interface ScrapeEvent {
   jobTitle?: string;
   counts?: ScrapeSourceCount[];
   progress?: number;
+  elapsedMs?: number;
+  eta?: string;
   timestamp: string;
 }
 

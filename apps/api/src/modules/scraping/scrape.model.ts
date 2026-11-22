@@ -66,6 +66,8 @@ export interface ScrapeEventDoc extends Document {
   jobTitle?: string;
   counts?: ScrapeSourceCount[];
   progress?: number;
+  elapsedMs?: number;
+  eta?: string;
   timestamp: Date;
 }
 
@@ -142,6 +144,8 @@ const scrapeEventSchema = new Schema<ScrapeEventDoc>(
     jobTitle: { type: String },
     counts: [scrapeSourceCountSchema],
     progress: { type: Number },
+    elapsedMs: { type: Number },
+    eta: { type: String },
     timestamp: { type: Date, required: true, default: Date.now },
   },
   { timestamps: true }

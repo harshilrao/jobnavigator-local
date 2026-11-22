@@ -24,6 +24,9 @@ import {
   type UserJobDoc,
 } from './job.model';
 import { JobFilterSchema, type JobFilter } from '@jobnavigator/shared';
+import { RawPosting } from './job.model';
+import { MatchReport } from '../ai/ai.model';
+import { GeneratedDocument } from '../resumes/resume.model';
 
 /** Minimal CSV parser (handles quoted fields with embedded commas). No extra dependency. */
 function parseCsvLine(line: string): string[] {
@@ -104,6 +107,19 @@ export interface JobView {
   isClosed: boolean;
   savedState: SavedState;
   aiScore?: number;
+
+  // Phase 6A: JobSpy-specific fields
+  jobType?: 'fulltime' | 'parttime' | 'contract' | 'internship' | 'temporary';
+  workArrangement?: 'remote' | 'hybrid' | 'onsite';
+  postedAt?: Date;
+  emails?: string[];
+  // Extracted/derived fields from description (clearly labelled as derived)
+  derivedSkills?: string[];
+  derivedExperienceYears?: string;
+  derivedEducation?: string;
+  derivedBenefits?: string[];
+  derivedRequirements?: string[];
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -134,6 +150,19 @@ function jobToView(doc: JobDoc): JobView {
     isClosed: doc.isClosed,
     savedState: doc.savedState,
     aiScore: doc.aiScore,
+
+    // Phase 6A: JobSpy-specific fields
+    jobType: doc.jobType,
+    workArrangement: doc.workArrangement,
+    postedAt: doc.postedAt,
+    emails: doc.emails,
+    // Extracted/derived fields from description (clearly labelled as derived)
+    derivedSkills: doc.derivedSkills,
+    derivedExperienceYears: doc.derivedExperienceYears,
+    derivedEducation: doc.derivedEducation,
+    derivedBenefits: doc.derivedBenefits,
+    derivedRequirements: doc.derivedRequirements,
+
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -484,22 +513,94 @@ export async function getUserJob(
   }).exec();
 }
 
-/** Delete a job (only if owned by the user). Also removes the UserJob link. */
+/** Delete a job (only if owned by the user). Also removes the UserJob link and related references. */
 export async function deleteJob(
   ownerId: string,
   jobId: string,
 ): Promise<boolean> {
   if (!Types.ObjectId.isValid(jobId)) return false;
+  const jobObjectId = new Types.ObjectId(jobId);
+  const ownerObjectId = new Types.ObjectId(ownerId);
+
   const result = await Job.deleteOne({
-    _id: jobId,
-    ownerId: new Types.ObjectId(ownerId),
+    _id: jobObjectId,
+    ownerId: ownerObjectId,
   }).exec();
+
   if (result.deletedCount > 0) {
-    await UserJob.deleteOne({
-      ownerId: new Types.ObjectId(ownerId),
-      jobId: new Types.ObjectId(jobId),
-    }).exec();
+    // Clean up related references
+    await Promise.all([
+      // Remove user's saved state/note/stage for this job
+      UserJob.deleteOne({
+        ownerId: ownerObjectId,
+        jobId: jobObjectId,
+      }).exec(),
+      // Remove match reports for this job (owner-scoped)
+      MatchReport.deleteMany({
+        ownerId: ownerObjectId,
+        jobId: jobObjectId,
+      }).exec(),
+      // Remove generated documents (tailored resumes/cover letters) for this job
+      GeneratedDocument.deleteMany({
+        ownerId: ownerObjectId,
+        jobId: jobObjectId,
+      }).exec(),
+      // Unlink raw postings that pointed to this normalized job
+      RawPosting.updateMany(
+        { normalizedJobId: jobObjectId },
+        { $unset: { normalizedJobId: 1 } },
+      ).exec(),
+    ]);
     return true;
   }
   return false;
+}
+
+/** Delete ALL jobs for a user. Returns count of deleted jobs. */
+export async function deleteAllJobs(
+  ownerId: string,
+): Promise<number> {
+  const ownerObjectId = new Types.ObjectId(ownerId);
+
+  const jobIds = await Job.find({ ownerId: ownerObjectId })
+    .select('_id')
+    .lean()
+    .exec();
+
+  const ids = jobIds.map(j => j._id);
+
+  if (ids.length === 0) return 0;
+
+  const result = await Job.deleteMany({
+    _id: { $in: ids },
+    ownerId: ownerObjectId,
+  }).exec();
+
+  if (result.deletedCount > 0) {
+    // Clean up all related references for all deleted jobs
+    await Promise.all([
+      // Remove all user's saved state/notes/stages for these jobs
+      UserJob.deleteMany({
+        ownerId: ownerObjectId,
+        jobId: { $in: ids },
+      }).exec(),
+      // Remove all match reports for these jobs
+      MatchReport.deleteMany({
+        ownerId: ownerObjectId,
+        jobId: { $in: ids },
+      }).exec(),
+      // Remove all generated documents for these jobs
+      GeneratedDocument.deleteMany({
+        ownerId: ownerObjectId,
+        jobId: { $in: ids },
+      }).exec(),
+      // Unlink all raw postings that pointed to any of these normalized jobs
+      RawPosting.updateMany(
+        { normalizedJobId: { $in: ids } },
+        { $unset: { normalizedJobId: 1 } },
+      ).exec(),
+    ]);
+  }
+
+  return result.deletedCount;
 }

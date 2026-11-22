@@ -89,6 +89,18 @@ export interface JobDoc extends Document {
   aiScore?: number;
   aiScoreProvider?: string;
   aiScoredAt?: Date;
+
+  // Phase 6A: JobSpy-specific fields (may be unavailable for some sources)
+  jobType?: 'fulltime' | 'parttime' | 'contract' | 'internship' | 'temporary';
+  workArrangement?: 'remote' | 'hybrid' | 'onsite';
+  postedAt?: Date;
+  emails?: string[];
+  // Extracted/derived fields from description (clearly labelled as derived)
+  derivedSkills?: string[];
+  derivedExperienceYears?: string;
+  derivedEducation?: string;
+  derivedBenefits?: string[];
+  derivedRequirements?: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -206,6 +218,24 @@ const jobSchema = new Schema<JobDoc>(
     aiScore: { type: Number },
     aiScoreProvider: { type: String },
     aiScoredAt: { type: Date },
+
+    // Phase 6A: JobSpy-specific fields
+    jobType: {
+      type: String,
+      enum: ['fulltime', 'parttime', 'contract', 'internship', 'temporary'],
+    },
+    workArrangement: {
+      type: String,
+      enum: ['remote', 'hybrid', 'onsite'],
+    },
+    postedAt: { type: Date },
+    emails: [{ type: String }],
+    // Extracted/derived fields from description (clearly labelled as derived)
+    derivedSkills: [{ type: String }],
+    derivedExperienceYears: { type: String },
+    derivedEducation: { type: String },
+    derivedBenefits: [{ type: String }],
+    derivedRequirements: [{ type: String }],
   },
   { timestamps: true }
 );

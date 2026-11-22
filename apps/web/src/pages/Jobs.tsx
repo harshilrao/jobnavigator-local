@@ -4,6 +4,7 @@ import {
   getJobs,
   getJob,
   deleteJob,
+  deleteAllJobs,
   updateUserJob,
   listScrapeSessions,
   runScrapeSession,
@@ -417,12 +418,48 @@ export function Jobs() {
               🔄 live
             </span>
           )}
+          {total > 0 && (
+            <button
+              onClick={async () => {
+                if (!window.confirm(`Delete ALL ${total} jobs? This cannot be undone.`)) return;
+                try {
+                  await deleteAllJobs();
+                  setJobs([]);
+                  setTotal(0);
+                  setNewJobsCount(0);
+                } catch (err) {
+                  console.error('Failed to delete all jobs:', err);
+                  alert('Failed to delete all jobs');
+                }
+              }}
+              className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700 transition mr-2"
+            >
+              Delete All
+            </button>
+          )}
         </div>
       </div>
 
       {error && (
         <div className="p-3 rounded text-sm text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/30">
           {error}
+        </div>
+      )}
+
+      {/* Show newly scraped jobs banner when filter might hide them */}
+      {(newJobsCount > 0 || (filter.savedState && filter.savedState !== 'none')) && (
+        <div className="p-3 rounded bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-900/40 mb-3 flex items-center justify-between flex-wrap gap-2">
+          <div className="text-sm text-blue-700 dark:text-blue-400">
+            {newJobsCount > 0
+              ? `There are ${newJobsCount} newly scraped job${newJobsCount > 1 ? 's' : ''} on page 1.`
+              : 'Your current filter may be hiding newly scraped jobs.'}
+          </div>
+          <button
+            onClick={() => setFilter((f) => ({ ...f, page: 1, savedState: undefined }))}
+            className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition"
+          >
+            Show newly scraped jobs
+          </button>
         </div>
       )}
 
@@ -590,15 +627,34 @@ export function Jobs() {
                   </p>
                 )}
               </div>
-              <button
-                onClick={closeJobDetail}
-                className="rounded p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition"
-              >
-                <span className="sr-only">Close</span>
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={async () => {
+                    if (!window.confirm('Delete this job? This cannot be undone.')) return;
+                    try {
+                      await deleteJob(selectedJob.id);
+                      setJobs((prev) => prev.filter((j) => j.id !== selectedJob.id));
+                      setTotal((prev) => prev - 1);
+                      closeJobDetail();
+                    } catch (err) {
+                      console.error('Failed to delete job:', err);
+                      alert('Failed to delete job');
+                    }
+                  }}
+                  className="px-2.5 py-1 rounded text-xs font-semibold bg-red-600 text-white hover:bg-red-700 transition mr-2"
+                >
+                  Delete
+                </button>
+                <button
+                  onClick={closeJobDetail}
+                  className="rounded p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-700 dark:hover:text-slate-200 transition"
+                >
+                  <span className="sr-only">Close</span>
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               <div className="grid grid-cols-2 gap-4 text-xs">
@@ -610,6 +666,8 @@ export function Jobs() {
                   <div className="text-slate-500 dark:text-slate-400">Location</div>
                   <div className="text-slate-700 dark:text-slate-200">
                     {selectedJob.location.city || (selectedJob.location.remoteType !== 'unspecified' ? selectedJob.location.remoteType : '—')}
+                    {selectedJob.location.region && <span>, {selectedJob.location.region}</span>}
+                    {selectedJob.location.country && <span>, {selectedJob.location.country}</span>}
                   </div>
                 </div>
                 <div>
@@ -624,6 +682,30 @@ export function Jobs() {
                     {selectedJob.aiScore !== undefined ? String(selectedJob.aiScore) : '—'}
                   </div>
                 </div>
+                {selectedJob.jobType && (
+                  <div>
+                    <div className="text-slate-500 dark:text-slate-400">Job type</div>
+                    <div className="text-slate-700 dark:text-slate-200">{selectedJob.jobType}</div>
+                  </div>
+                )}
+                {selectedJob.workArrangement && (
+                  <div>
+                    <div className="text-slate-500 dark:text-slate-400">Work arrangement</div>
+                    <div className="text-slate-700 dark:text-slate-200">{selectedJob.workArrangement}</div>
+                  </div>
+                )}
+                {selectedJob.postedAt && (
+                  <div>
+                    <div className="text-slate-500 dark:text-slate-400">Posted</div>
+                    <div className="text-slate-700 dark:text-slate-200">{new Date(selectedJob.postedAt).toLocaleDateString()}</div>
+                  </div>
+                )}
+                {selectedJob.provenance?.sourceJobId && (
+                  <div>
+                    <div className="text-slate-500 dark:text-slate-400">Source Job ID</div>
+                    <div className="text-slate-700 dark:text-slate-200 font-mono text-[10px]">{selectedJob.provenance.sourceJobId}</div>
+                  </div>
+                )}
               </div>
 
               {selectedJob.description && (
@@ -634,6 +716,151 @@ export function Jobs() {
                   </div>
                 </div>
               )}
+
+              {/* Phase 6A: Additional JobSpy fields and derived data */}
+              {(selectedJob.emails && selectedJob.emails.length > 0) || (selectedJob.provenance?.originalUrl) || (selectedJob.provenance?.canonicalUrl) ? (
+                <div className="border-t border-slate-200 dark:border-slate-700 pt-4">
+                  <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase mb-2">Provenance & Contact</div>
+                  <div className="space-y-2 text-xs">
+                    {selectedJob.emails && selectedJob.emails.length > 0 && (
+                      <div>
+                        <div className="text-slate-500 dark:text-slate-400">Emails (from source)</div>
+                        <div className="text-slate-700 dark:text-slate-200 font-mono">
+                          {selectedJob.emails.join(', ')}
+                        </div>
+                      </div>
+                    )}
+                    {selectedJob.provenance?.originalUrl && (
+                      <div>
+                        <div className="text-slate-500 dark:text-slate-400">Original URL</div>
+                        <a href={selectedJob.provenance.originalUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-600 dark:text-indigo-400 hover:underline text-[11px] break-all">
+                          {selectedJob.provenance.originalUrl}
+                        </a>
+                      </div>
+                    )}
+                    {selectedJob.provenance?.canonicalUrl && selectedJob.provenance.canonicalUrl !== selectedJob.provenance.originalUrl && (
+                      <div>
+                        <div className="text-slate-500 dark:text-slate-400">Canonical URL</div>
+                        <a href={selectedJob.provenance.canonicalUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-600 dark:text-indigo-400 hover:underline text-[11px] break-all">
+                          {selectedJob.provenance.canonicalUrl}
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Derived fields from description (clearly labelled as DERIVED) */}
+              {((selectedJob.derivedSkills && selectedJob.derivedSkills.length > 0) ||
+                selectedJob.derivedExperienceYears ||
+                selectedJob.derivedEducation ||
+                (selectedJob.derivedBenefits && selectedJob.derivedBenefits.length > 0) ||
+                (selectedJob.derivedRequirements && selectedJob.derivedRequirements.length > 0)) ? (
+                <div className="border-t border-slate-200 dark:border-slate-700 pt-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">Derived from description (not verified by employer)</div>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-900/40">
+                      DERIVED
+                    </span>
+                  </div>
+                  <div className="space-y-3 text-xs">
+                    {selectedJob.derivedSkills && selectedJob.derivedSkills.length > 0 && (
+                      <div>
+                        <div className="text-slate-500 dark:text-slate-400 mb-1">Skills mentioned</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {selectedJob.derivedSkills.map((skill, i) => (
+                            <span key={i} className="px-2 py-0.5 text-[10px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded border border-slate-200 dark:border-slate-700">
+                              {skill}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {selectedJob.derivedExperienceYears && (
+                      <div>
+                        <div className="text-slate-500 dark:text-slate-400 mb-1">Experience mentioned</div>
+                        <div className="text-slate-700 dark:text-slate-200">{selectedJob.derivedExperienceYears}</div>
+                      </div>
+                    )}
+                    {selectedJob.derivedEducation && (
+                      <div>
+                        <div className="text-slate-500 dark:text-slate-400 mb-1">Education mentioned</div>
+                        <div className="text-slate-700 dark:text-slate-200">{selectedJob.derivedEducation}</div>
+                      </div>
+                    )}
+                    {selectedJob.derivedBenefits && selectedJob.derivedBenefits.length > 0 && (
+                      <div>
+                        <div className="text-slate-500 dark:text-slate-400 mb-1">Benefits mentioned</div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {selectedJob.derivedBenefits.map((benefit, i) => (
+                            <span key={i} className="px-2 py-0.5 text-[10px] font-medium bg-green-100 dark:bg-green-900/20 text-green-700 dark:text-green-400 rounded border border-green-200 dark:border-green-900/40">
+                              {benefit}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {selectedJob.derivedRequirements && selectedJob.derivedRequirements.length > 0 && (
+                      <div>
+                        <div className="text-slate-500 dark:text-slate-400 mb-1">Requirements mentioned</div>
+                        <ul className="text-slate-600 dark:text-slate-300 space-y-1 list-disc pl-4">
+                          {selectedJob.derivedRequirements.map((req, i) => (
+                            <li key={i}>{req}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Data quality indicator */}
+              <div className="border-t border-slate-200 dark:border-slate-700 pt-4">
+                <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase mb-2">Data quality</div>
+                <div className="grid grid-cols-2 gap-4 text-xs">
+                  <div>
+                    <div className="text-slate-500 dark:text-slate-400">Quality status</div>
+                    <div className="text-slate-700 dark:text-slate-200 capitalize">{selectedJob.qualityStatus}</div>
+                  </div>
+                  <div>
+                    <div className="text-slate-500 dark:text-slate-400">Source</div>
+                    <div className="text-slate-700 dark:text-slate-200 font-mono">{selectedJob.provenance?.source ?? '—'}</div>
+                  </div>
+                  <div>
+                    <div className="text-slate-500 dark:text-slate-400">Retrieved</div>
+                    <div className="text-slate-700 dark:text-slate-200">
+                      {selectedJob.provenance?.retrievedAt ? new Date(selectedJob.provenance.retrievedAt).toLocaleString() : '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-slate-500 dark:text-slate-400">Description status</div>
+                    <div className="text-slate-700 dark:text-slate-200 capitalize">{selectedJob.descriptionStatus}</div>
+                  </div>
+                  <div className="col-span-2">
+                    <div className="text-slate-500 dark:text-slate-400 mb-1">Missing fields (not provided by source)</div>
+                    <div className="flex flex-wrap gap-1.5 text-[10px]">
+                      {(!selectedJob.description || selectedJob.descriptionStatus === 'missing') && (
+                        <span className="px-1.5 py-0.5 bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-400 rounded border border-red-200 dark:border-red-900/40">Full description</span>
+                      )}
+                      {!selectedJob.salary && (
+                        <span className="px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 rounded border border-amber-200 dark:border-amber-900/40">Salary</span>
+                      )}
+                      {!selectedJob.jobType && (
+                        <span className="px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 rounded border border-amber-200 dark:border-amber-900/40">Job type</span>
+                      )}
+                      {!selectedJob.workArrangement && (
+                        <span className="px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 rounded border border-amber-200 dark:border-amber-900/40">Work arrangement</span>
+                      )}
+                      {!selectedJob.postedAt && (
+                        <span className="px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 rounded border border-amber-200 dark:border-amber-900/40">Post date</span>
+                      )}
+                      {(selectedJob.emails === undefined || selectedJob.emails?.length === 0) && (
+                        <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded border border-slate-200 dark:border-slate-700">Contact emails</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
 
               {/* Scoring section */}
               <div className="border-t border-slate-200 dark:border-slate-700 pt-4">

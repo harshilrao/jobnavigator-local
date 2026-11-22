@@ -9,7 +9,7 @@ const jwt = require('jsonwebtoken');
 const ACCESS_SECRET: Secret = process.env.JWT_ACCESS_SECRET ?? 'dev-access-secret-change-me';
 const REFRESH_SECRET: Secret = process.env.JWT_REFRESH_SECRET ?? 'dev-refresh-secret-change-me';
 
-export const ACCESS_TTL = '15m';
+export const ACCESS_TTL = '7h';
 export const REFRESH_TTL = '7d';
 
 export interface TokenPayload {

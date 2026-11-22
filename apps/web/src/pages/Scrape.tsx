@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   getAdapters,
   createScrapeSession,
@@ -8,12 +9,14 @@ import {
   runScrapeSession,
   getAuthToken,
   scrapeEventStream,
+  getJob,
   type AdapterDescriptor,
   type ScrapeSession,
   type ScrapeSessionStatus,
   type ScrapeEvent,
   type StreamController,
   type SourceCapabilityStatus,
+  type JobView,
 } from '@/lib/api';
 
 const POLL_INTERVAL_MS = 3000;
@@ -43,6 +46,18 @@ const TYPE_ICONS: Record<string, string> = {
   cancelled: '🛑',
   complete: '🏁',
 };
+
+/** Format elapsed milliseconds to human readable string */
+function formatElapsed(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
 
 /** Check if a source is a JobSpy aggregator source (Phase 6A) */
 function isJobSpySource(sourceId: string): boolean {
@@ -74,10 +89,147 @@ const CA_PROVINCES = [
   'AB', 'BC', 'MB', 'NB', 'NL', 'NS', 'NT', 'NU', 'ON', 'PE', 'QC', 'SK', 'YT',
 ];
 
+/** Get Indian states/UTs */
+const IN_STATES = [
+  'AN', 'AP', 'AR', 'AS', 'BR', 'CH', 'CG', 'DD', 'DL', 'DN', 'GA', 'GJ', 'HP',
+  'HR', 'JH', 'JK', 'KA', 'KL', 'LA', 'LD', 'MH', 'ML', 'MN', 'MP', 'MZ', 'NL',
+  'OR', 'PB', 'PY', 'RJ', 'SK', 'TN', 'TR', 'TS', 'UK', 'UP', 'WB',
+];
+
+/** Major US cities by state (top metros) */
+const US_CITIES: Record<string, string[]> = {
+  AL: ['Birmingham', 'Huntsville', 'Mobile', 'Montgomery'],
+  AK: ['Anchorage', 'Fairbanks', 'Juneau'],
+  AZ: ['Phoenix', 'Tucson', 'Mesa', 'Chandler', 'Scottsdale'],
+  AR: ['Little Rock', 'Fayetteville', 'Fort Smith'],
+  CA: ['Los Angeles', 'San Francisco', 'San Diego', 'San Jose', 'Sacramento', 'Oakland', 'Fresno', 'Long Beach'],
+  CO: ['Denver', 'Colorado Springs', 'Aurora', 'Fort Collins'],
+  CT: ['Bridgeport', 'New Haven', 'Stamford', 'Hartford'],
+  DE: ['Wilmington', 'Dover'],
+  FL: ['Miami', 'Tampa', 'Orlando', 'Jacksonville', 'Fort Lauderdale', 'St. Petersburg'],
+  GA: ['Atlanta', 'Augusta', 'Columbus', 'Savannah', 'Athens'],
+  HI: ['Honolulu', 'Hilo', 'Kailua'],
+  ID: ['Boise', 'Meridian', 'Nampa'],
+  IL: ['Chicago', 'Aurora', 'Naperville', 'Springfield', 'Peoria'],
+  IN: ['Indianapolis', 'Fort Wayne', 'Evansville', 'South Bend'],
+  IA: ['Des Moines', 'Cedar Rapids', 'Davenport', 'Sioux City'],
+  KS: ['Wichita', 'Overland Park', 'Kansas City', 'Topeka'],
+  KY: ['Louisville', 'Lexington', 'Bowling Green'],
+  LA: ['New Orleans', 'Baton Rouge', 'Shreveport', 'Lafayette'],
+  ME: ['Portland', 'Lewiston', 'Bangor'],
+  MD: ['Baltimore', 'Frederick', 'Rockville', 'Annapolis'],
+  MA: ['Boston', 'Worcester', 'Springfield', 'Cambridge', 'Lowell'],
+  MI: ['Detroit', 'Grand Rapids', 'Ann Arbor', 'Lansing', 'Flint'],
+  MN: ['Minneapolis', 'St. Paul', 'Rochester', 'Duluth'],
+  MS: ['Jackson', 'Gulfport', 'Hattiesburg'],
+  MO: ['Kansas City', 'St. Louis', 'Springfield', 'Columbia'],
+  MT: ['Billings', 'Missoula', 'Bozeman', 'Great Falls'],
+  NE: ['Omaha', 'Lincoln', 'Bellevue'],
+  NV: ['Las Vegas', 'Reno', 'Henderson', 'North Las Vegas'],
+  NH: ['Manchester', 'Nashua', 'Concord'],
+  NJ: ['Newark', 'Jersey City', 'Paterson', 'Elizabeth', 'Trenton'],
+  NM: ['Albuquerque', 'Las Cruces', 'Rio Rancho', 'Santa Fe'],
+  NY: ['New York City', 'Buffalo', 'Rochester', 'Yonkers', 'Syracuse', 'Albany'],
+  NC: ['Charlotte', 'Raleigh', 'Greensboro', 'Durham', 'Winston-Salem'],
+  ND: ['Fargo', 'Bismarck', 'Grand Forks'],
+  OH: ['Columbus', 'Cleveland', 'Cincinnati', 'Toledo', 'Akron'],
+  OK: ['Oklahoma City', 'Tulsa', 'Norman', 'Broken Arrow'],
+  OR: ['Portland', 'Eugene', 'Salem', 'Gresham', 'Hillsboro'],
+  PA: ['Philadelphia', 'Pittsburgh', 'Allentown', 'Erie', 'Reading'],
+  RI: ['Providence', 'Warwick', 'Cranston'],
+  SC: ['Charleston', 'Columbia', 'North Charleston', 'Mount Pleasant'],
+  SD: ['Sioux Falls', 'Rapid City', 'Aberdeen'],
+  TN: ['Nashville', 'Memphis', 'Knoxville', 'Chattanooga', 'Clarksville'],
+  TX: ['Houston', 'San Antonio', 'Dallas', 'Austin', 'Fort Worth', 'El Paso', 'Arlington'],
+  UT: ['Salt Lake City', 'West Valley City', 'Provo', 'West Jordan'],
+  VT: ['Burlington', 'South Burlington', 'Rutland'],
+  VA: ['Virginia Beach', 'Norfolk', 'Chesapeake', 'Richmond', 'Newport News', 'Alexandria', 'Arlington'],
+  WA: ['Seattle', 'Spokane', 'Tacoma', 'Vancouver', 'Bellevue'],
+  WV: ['Charleston', 'Huntington', 'Morgantown'],
+  WI: ['Milwaukee', 'Madison', 'Green Bay', 'Kenosha'],
+  WY: ['Cheyenne', 'Casper', 'Laramie'],
+};
+
+/** Major Canadian cities by province */
+const CA_CITIES: Record<string, string[]> = {
+  AB: ['Calgary', 'Edmonton', 'Red Deer', 'Lethbridge'],
+  BC: ['Vancouver', 'Surrey', 'Burnaby', 'Richmond', 'Abbotsford', 'Victoria'],
+  MB: ['Winnipeg', 'Brandon', 'Steinbach'],
+  NB: ['Moncton', 'Saint John', 'Fredericton'],
+  NL: ['St. John\'s', 'Mount Pearl', 'Corner Brook'],
+  NS: ['Halifax', 'Sydney', 'Truro'],
+  NT: ['Yellowknife'],
+  NU: ['Iqaluit'],
+  ON: ['Toronto', 'Ottawa', 'Mississauga', 'Brampton', 'Hamilton', 'London', 'Kitchener', 'Windsor'],
+  PE: ['Charlottetown', 'Summerside'],
+  QC: ['Montreal', 'Quebec City', 'Laval', 'Gatineau', 'Longueuil'],
+  SK: ['Saskatoon', 'Regina', 'Prince Albert'],
+  YT: ['Whitehorse'],
+};
+
+/** Major Indian cities by state/UT */
+const IN_CITIES: Record<string, string[]> = {
+  AN: ['Port Blair'],
+  AP: ['Visakhapatnam', 'Vijayawada', 'Guntur', 'Tirupati'],
+  AR: ['Itanagar'],
+  AS: ['Guwahati', 'Silchar', 'Dibrugarh'],
+  BR: ['Patna', 'Gaya', 'Bhagalpur'],
+  CH: ['Chandigarh'],
+  CG: ['Raipur', 'Bhilai', 'Bilaspur'],
+  DD: ['Daman'],
+  DL: ['New Delhi', 'Delhi', 'Dwarka', 'Rohini'],
+  DN: ['Silvassa'],
+  GA: ['Panaji', 'Margao'],
+  GJ: ['Ahmedabad', 'Surat', 'Vadodara', 'Rajkot', 'Gandhinagar'],
+  HP: ['Shimla', 'Dharamshala', 'Manali'],
+  HR: ['Gurugram', 'Faridabad', 'Panipat', 'Ambala'],
+  JH: ['Ranchi', 'Jamshedpur', 'Dhanbad'],
+  JK: ['Srinagar', 'Jammu'],
+  KA: ['Bengaluru', 'Mysuru', 'Hubballi', 'Mangaluru'],
+  KL: ['Thiruvananthapuram', 'Kochi', 'Kozhikode', 'Thrissur'],
+  LA: ['Leh'],
+  LD: ['Kavaratti'],
+  MH: ['Mumbai', 'Pune', 'Nagpur', 'Nashik', 'Aurangabad'],
+  ML: ['Shillong'],
+  MN: ['Imphal'],
+  MP: ['Bhopal', 'Indore', 'Jabalpur', 'Gwalior'],
+  MZ: ['Aizawl'],
+  NL: ['Kohima', 'Dimapur'],
+  OR: ['Bhubaneswar', 'Cuttack', 'Rourkela'],
+  PB: ['Ludhiana', 'Amritsar', 'Jalandhar', 'Patiala'],
+  PY: ['Puducherry'],
+  RJ: ['Jaipur', 'Jodhpur', 'Udaipur', 'Kota'],
+  SK: ['Gangtok'],
+  TN: ['Chennai', 'Coimbatore', 'Madurai', 'Salem', 'Tiruchirappalli'],
+  TR: ['Agartala'],
+  TS: ['Hyderabad', 'Warangal', 'Nizamabad'],
+  UK: ['Dehradun', 'Haridwar', 'Roorkee'],
+  UP: ['Lucknow', 'Kanpur', 'Varanasi', 'Agra', 'Prayagraj', 'Noida', 'Ghaziabad'],
+  WB: ['Kolkata', 'Howrah', 'Durgapur', 'Asansol', 'Siliguri'],
+};
+
+/** Allowed countries (only USA, Canada, India) */
+const ALLOWED_COUNTRIES = [
+  { code: 'USA', label: 'United States' },
+  { code: 'CAN', label: 'Canada' },
+  { code: 'IND', label: 'India' },
+] as const;
+
+type AllowedCountryCode = typeof ALLOWED_COUNTRIES[number]['code'];
+
 /** Determine if province selector should show based on selected country */
 function getProvinceOptions(country: string): string[] {
   if (country === 'USA') return US_STATES;
   if (country === 'CAN') return CA_PROVINCES;
+  if (country === 'IND') return IN_STATES;
+  return [];
+}
+
+/** Get cities for a country + province/state */
+function getCityOptions(country: string, provinceState: string): string[] {
+  if (country === 'USA') return US_CITIES[provinceState] || [];
+  if (country === 'CAN') return CA_CITIES[provinceState] || [];
+  if (country === 'IND') return IN_CITIES[provinceState] || [];
   return [];
 }
 
@@ -98,27 +250,49 @@ export function Scrape() {
   const [streamError, setStreamError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
+  // Progress tracking
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [eta, setEta] = useState<string>('Calculating…');
+  const [lastProgressEvent, setLastProgressEvent] = useState<ScrapeEvent | null>(null);
+
   // Start-scrape form state.
   const [query, setQuery] = useState('');
   const [selectedSources, setSelectedSources] = useState<string[]>([]);
-  const [locations, setLocations] = useState('');
-
+  
   // Phase 6A: Advanced JobSpy filters
   const [experienceLevel, setExperienceLevel] = useState<'0-1' | '1-2' | '2-3' | '3-5' | '5+' | ''>('');
   const [workArrangement, setWorkArrangement] = useState<'remote' | 'hybrid' | 'onsite' | ''>('');
-  const [country, setCountry] = useState<'USA' | 'CAN' | 'GBR' | 'AUS' | 'DEU' | 'FRA' | 'IND' | 'BRA' | 'MEX' | 'ESP' | 'ITA' | 'NLD' | 'POL' | 'CHE' | 'SWE' | 'NOR' | 'DNK' | 'FIN' | 'AUT' | 'BEL' | 'IRL' | 'PRT' | 'SGP' | 'HKG' | 'JPN' | 'KOR' | 'NZL' | 'ZAF' | 'ARE' | 'ISR' | 'TUR' | 'CHN' | ''>('');
+  const [country, setCountry] = useState<AllowedCountryCode | ''>('');
   const [provinceState, setProvinceState] = useState('');
+  const [city, setCity] = useState('');
   const [jobType, setJobType] = useState<'fulltime' | 'parttime' | 'contract' | 'internship' | 'temporary' | ''>('');
   const [easyApply, setEasyApply] = useState(false);
   const [postedWithinHours, setPostedWithinHours] = useState<number | ''>('');
   const [radiusKm, setRadiusKm] = useState<number | ''>('');
   const [seniority, setSeniority] = useState<'intern' | 'entry' | 'mid' | 'senior' | 'lead' | 'unspecified' | ''>('');
   const [employmentType, setEmploymentType] = useState<'full-time' | 'part-time' | 'contract' | 'temporary' | 'freelance' | 'unspecified' | ''>('');
+  const [fetchDescription, setFetchDescription] = useState(true);
   const [excludeKeywords, setExcludeKeywords] = useState('');
   const [excludeCompanies, setExcludeCompanies] = useState('');
 
   const streamRef = useRef<StreamController | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const navigate = useNavigate();
+
+  // Live job postings state (persisted across navigation via localStorage)
+  const [liveJobs, setLiveJobs] = useState<JobView[]>(() => {
+    if (typeof localStorage !== 'undefined') {
+      const stored = localStorage.getItem('jn_live_jobs');
+      if (stored) {
+        try {
+          return JSON.parse(stored);
+        } catch {
+          return [];
+        }
+      }
+    }
+    return [];
+  });
 
   const clearStream = useCallback(() => {
     streamRef.current?.close();
@@ -128,6 +302,13 @@ export function Scrape() {
       pollRef.current = null;
     }
   }, []);
+
+  // Persist live jobs to localStorage
+  useEffect(() => {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('jn_live_jobs', JSON.stringify(liveJobs));
+    }
+  }, [liveJobs]);
 
   const loadAdapters = async () => {
     try {
@@ -212,7 +393,8 @@ export function Scrape() {
           limit: 20,
           sort: 'createdAt',
           order: 'desc',
-          locations: locations.split(',').map((s) => s.trim()).filter(Boolean),
+          // Build locations from dropdown values
+          locations: [city, provinceState, country].filter(Boolean),
           // Phase 6A: JobSpy advanced filters
           experienceLevel: experienceLevel || undefined,
           workArrangement: workArrangement || undefined,
@@ -221,14 +403,16 @@ export function Scrape() {
           easyApply: easyApply || undefined,
           country: country || undefined,
           provinceState: provinceState || undefined,
+          city: city || undefined,
           radiusKm: typeof radiusKm === 'number' ? radiusKm : undefined,
           seniority: seniority || undefined,
           employmentType: employmentType || undefined,
           excludeKeywords: excludeKeywords || undefined,
           excludeCompanies: excludeCompanies || undefined,
+          fetchDescription: fetchDescription || undefined,
         },
         sources,
-        locations: locations.split(',').map((s) => s.trim()).filter(Boolean),
+        locations: [city, provinceState, country].filter(Boolean),
       });
 
       setActiveSessionId(created.id);
@@ -282,10 +466,42 @@ export function Scrape() {
 
   const openStream = (sessionId: string) => {
     clearStream();
+    // Reset progress tracking
+    setElapsedMs(0);
+    setEta('Calculating…');
+    setLastProgressEvent(null);
+
     const ctrl = scrapeEventStream(
       sessionId,
       (event) => {
         setEvents((prev) => [...prev.slice(-99), event]);
+
+        // Track progress events for elapsed time and ETA
+        if (event.type === 'progress' || event.type === 'source_started' || event.type === 'job_discovered' || event.type === 'job_saved' || event.type === 'job_skipped') {
+          if (event.elapsedMs !== undefined) {
+            setElapsedMs(event.elapsedMs);
+          }
+          if (event.eta) {
+            setEta(event.eta);
+          }
+          setLastProgressEvent(event);
+        }
+
+        // Handle job_saved - fetch full job and add to live jobs
+        if (event.type === 'job_saved' && event.jobId) {
+          getJob(event.jobId)
+            .then((fullJob) => {
+              setLiveJobs((prev) => {
+                // Avoid duplicates
+                if (prev.some((j) => j.id === fullJob.id)) return prev;
+                return [fullJob, ...prev];
+              });
+            })
+            .catch(() => {
+              // Ignore fetch errors
+            });
+        }
+
         if (event.counts) {
           setActiveSession((s) =>
             s ? { ...s, counts: event.counts as ScrapeSession['counts'] } : s,
@@ -366,6 +582,10 @@ export function Scrape() {
   const provinceOptions = useMemo(() => getProvinceOptions(country), [country]);
   const showProvince = provinceOptions.length > 0;
 
+  // City options based on country + province
+  const cityOptions = useMemo(() => getCityOptions(country, provinceState), [country, provinceState]);
+  const showCity = cityOptions.length > 0;
+
   return (
     <div className="space-y-6">
       <div>
@@ -444,30 +664,20 @@ export function Scrape() {
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Locations</label>
-            <input
-              value={locations}
-              onChange={(e) => setLocations(e.target.value)}
-              className="w-full rounded border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              placeholder="e.g. New York, Remote"
-            />
-          </div>
-          <div>
             <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Country</label>
             <select
               value={country}
-              onChange={(e) => setCountry(e.target.value as typeof country)}
+              onChange={(e) => {
+                setCountry(e.target.value as typeof country);
+                setProvinceState(''); // Reset province when country changes
+                setCity(''); // Reset city when country changes
+              }}
               className="w-full rounded border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             >
               <option value="">Any</option>
-              <option value="USA">United States</option>
-              <option value="CAN">Canada</option>
-              <option value="GBR">United Kingdom</option>
-              <option value="AUS">Australia</option>
-              <option value="DEU">Germany</option>
-              <option value="FRA">France</option>
-              <option value="IND">India</option>
-              <option value="BRA">Brazil</option>
+              {ALLOWED_COUNTRIES.map((c) => (
+                <option key={c.code} value={c.code}>{c.label}</option>
+              ))}
             </select>
           </div>
           {showProvince && (
@@ -475,12 +685,30 @@ export function Scrape() {
               <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Province / State</label>
               <select
                 value={provinceState}
-                onChange={(e) => setProvinceState(e.target.value)}
+                onChange={(e) => {
+                  setProvinceState(e.target.value);
+                  setCity(''); // Reset city when province changes
+                }}
                 className="w-full rounded border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
                 <option value="">Any</option>
                 {provinceOptions.map((p) => (
                   <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {showCity && (
+            <div>
+              <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">City</label>
+              <select
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+                className="w-full rounded border border-slate-300 dark:border-slate-600 px-3 py-2 text-sm bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">Any</option>
+                {cityOptions.map((c) => (
+                  <option key={c} value={c}>{c}</option>
                 ))}
               </select>
             </div>
@@ -616,6 +844,17 @@ export function Scrape() {
               Easy Apply only
             </label>
           </div>
+          <div className="flex items-end">
+            <label className="flex items-center gap-2 cursor-pointer select-none text-xs" title="When enabled, JobSpy will fetch the full job description for each listing. This adds ~10-30 seconds per job on LinkedIn and may hit rate limits (429), but provides complete job details for matching and review.">
+              <input
+                type="checkbox"
+                checked={fetchDescription}
+                onChange={(e) => setFetchDescription(e.target.checked)}
+                className="rounded border-slate-300 dark:border-slate-600 text-indigo-600 focus:ring-indigo-500"
+              />
+              Fetch full job descriptions (slower)
+            </label>
+          </div>
 
           {/* Exclusion filters (local post-filters) */}
           <div className="col-span-2 lg:col-span-2">
@@ -669,7 +908,8 @@ export function Scrape() {
             </span>
           </div>
 
-          <div className="grid gap-2 sm:grid-cols-4 mb-3">
+          {/* Progress summary with elapsed time and ETA */}
+          <div className="grid gap-2 sm:grid-cols-6 mb-3">
             <div className="p-2 rounded bg-slate-50 dark:bg-slate-800/50">
               <div className="text-[10px] text-slate-500 dark:text-slate-400">Fetched</div>
               <div className="text-sm font-mono font-semibold">{activeSession.totalFetched}</div>
@@ -678,6 +918,18 @@ export function Scrape() {
               <div className="text-[10px] text-slate-500 dark:text-slate-400">Saved</div>
               <div className="text-sm font-mono font-semibold text-green-700 dark:text-green-400">
                 {activeSession.totalSaved}
+              </div>
+            </div>
+            <div className="p-2 rounded bg-slate-50 dark:bg-slate-800/50">
+              <div className="text-[10px] text-slate-500 dark:text-slate-400">Duplicates</div>
+              <div className="text-sm font-mono font-semibold">
+                {activeSession.counts?.reduce((sum, c) => sum + c.duplicates, 0) ?? 0}
+              </div>
+            </div>
+            <div className="p-2 rounded bg-slate-50 dark:bg-slate-800/50">
+              <div className="text-[10px] text-slate-500 dark:text-slate-400">Missing JD</div>
+              <div className="text-sm font-mono font-semibold text-amber-700 dark:text-amber-400">
+                {activeSession.counts?.reduce((sum, c) => sum + c.missingDescriptions, 0) ?? 0}
               </div>
             </div>
             <div className="p-2 rounded bg-slate-50 dark:bg-slate-800/50">
@@ -691,6 +943,44 @@ export function Scrape() {
               </div>
             </div>
           </div>
+
+          {/* Elapsed time and ETA */}
+          <div className="flex items-center gap-4 mb-3 flex-wrap text-xs">
+            <span className="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+              Elapsed: <span className="font-mono text-slate-700 dark:text-slate-200">{formatElapsed(elapsedMs)}</span>
+            </span>
+            <span className="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+              ETA: <span className="font-mono text-slate-700 dark:text-slate-200">{eta}</span>
+            </span>
+            {activeSession.status === 'running' && (
+              <span className="px-2 py-1 rounded bg-indigo-100 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-900/40 text-indigo-700 dark:text-indigo-400 animate-pulse">
+                ● Processing…
+              </span>
+            )}
+          </div>
+
+          {/* Per-source breakdown */}
+          {activeSession.counts && activeSession.counts.length > 0 && (
+            <div className="mb-3">
+              <div className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Per-source breakdown</div>
+              <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-4 text-[10px]">
+                {activeSession.counts.map((c) => (
+                  <div key={c.source} className="p-2 rounded bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                    <div className="font-medium text-slate-700 dark:text-slate-200 capitalize">{c.source}</div>
+                    <div className="grid grid-cols-7 gap-1 text-slate-600 dark:text-slate-400">
+                      <span>↓{c.fetched}</span>
+                      <span className="text-green-600 dark:text-green-400">✓{c.saved}</span>
+                      <span className="text-amber-600 dark:text-amber-400">⟳{c.duplicates}</span>
+                      <span className="text-red-600 dark:text-red-400">✗{c.failed}</span>
+                      <span className="text-slate-600 dark:text-slate-400">−{c.missingDescriptions}</span>
+                      <span className="text-blue-600 dark:text-blue-400">≈{c.matchedFilters}</span>
+                      <span className="text-slate-500 dark:text-slate-500">⌭{c.skipped}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {paused && (
             <div className="mb-3 p-2 rounded bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-900/40">
@@ -781,6 +1071,107 @@ export function Scrape() {
           {terminal && (
             <div className="mt-3 p-3 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-900/40 text-sm">
               Session {activeSession.status}. {activeSession.totalSaved} job(s) saved — open the Jobs page to view them.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Live Job Postings table */}
+      {(liveJobs.length > 0 || (activeSessionId && activeSession)) && (
+        <div className="layer-panel p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase">Live Job Postings</h3>
+            {liveJobs.length > 0 && (
+              <span className="text-xs text-slate-500 dark:text-slate-400">
+                {liveJobs.length} job{liveJobs.length !== 1 ? 's' : ''} discovered this session
+              </span>
+            )}
+          </div>
+          {liveJobs.length === 0 ? (
+            <div className="text-sm text-slate-500 dark:text-slate-400 text-center py-4">
+              Waiting for jobs to be discovered…
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-200 dark:border-slate-700">
+                    <th className="text-left pb-2 text-[10px] font-semibold text-slate-500 dark:text-slate-400">Title</th>
+                    <th className="text-left pb-2 text-[10px] font-semibold text-slate-500 dark:text-slate-400">Employer</th>
+                    <th className="text-left pb-2 text-[10px] font-semibold text-slate-500 dark:text-slate-400">Location</th>
+                    <th className="text-left pb-2 text-[10px] font-semibold text-slate-500 dark:text-slate-400">Source</th>
+                    <th className="text-left pb-2 text-[10px] font-semibold text-slate-500 dark:text-slate-400">Posted</th>
+                    <th className="text-left pb-2 text-[10px] font-semibold text-slate-500 dark:text-slate-400">Description</th>
+                    <th className="text-left pb-2 text-[10px] font-semibold text-slate-500 dark:text-slate-400">Status</th>
+                    <th className="text-right pb-2 text-[10px] font-semibold text-slate-500 dark:text-slate-400">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {liveJobs.map((job) => (
+                    <tr
+                      key={job.id}
+                      className="border-b border-slate-100 dark:border-slate-800/50 hover:bg-slate-50 dark:hover:bg-slate-800/30"
+                    >
+                      <td className="py-2">
+                        <div className="font-medium text-slate-700 dark:text-slate-200">{job.title}</div>
+                      </td>
+                      <td className="py-2 text-slate-600 dark:text-slate-400">{job.companyName ?? '—'}</td>
+                      <td className="py-2 text-slate-600 dark:text-slate-400 text-[11px]">
+                        {job.location.city || (job.location.remoteType !== 'unspecified' ? job.location.remoteType : '—')}
+                      </td>
+                      <td className="py-2 text-slate-600 dark:text-slate-400 text-[11px] font-mono">
+                        {job.provenance?.source ?? '—'}
+                      </td>
+                      <td className="py-2 text-slate-600 dark:text-slate-400 text-[11px]">
+                        {job.createdAt ? new Date(job.createdAt).toLocaleDateString() : '—'}
+                      </td>
+                      <td className="py-2">
+                        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                          job.descriptionStatus === 'complete'
+                            ? 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400 border border-green-200 dark:border-green-900/40'
+                            : job.descriptionStatus === 'partial'
+                            ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 border border-amber-200 dark:border-amber-900/40'
+                            : job.descriptionStatus === 'blocked'
+                            ? 'bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400 border border-red-200 dark:border-red-900/40'
+                            : 'bg-slate-100 text-slate-500 border border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'
+                        }`}>
+                          {job.descriptionStatus}
+                        </span>
+                      </td>
+                      <td className="py-2">
+                        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                          job.savedState === 'saved'
+                            ? 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400 border border-green-200 dark:border-green-900/40'
+                            : 'bg-slate-100 text-slate-500 border border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'
+                        }`}>
+                          {job.savedState}
+                        </span>
+                      </td>
+                      <td className="py-2 text-right">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/jobs/${job.id}`);
+                          }}
+                          className="px-2.5 py-1 rounded text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition mr-1"
+                        >
+                          View Details
+                        </button>
+                        {job.sources?.[0]?.url && (
+                          <a
+                            href={job.sources[0].url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-2.5 py-1 rounded text-xs font-semibold bg-slate-600 text-white hover:bg-slate-700 transition"
+                          >
+                            Open Original
+                          </a>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </div>

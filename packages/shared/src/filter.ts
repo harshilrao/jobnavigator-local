@@ -32,8 +32,9 @@ export const JobFilterSchema = z.object({
   experienceLevel: z.enum(['0-1', '1-2', '2-3', '3-5', '5+']).optional(),
   workArrangement: z.enum(['remote', 'hybrid', 'onsite']).optional(),
   postedWithinHours: z.number().int().positive().optional(),
-  country: z.enum(['USA', 'CAN', 'GBR', 'AUS', 'DEU', 'FRA', 'IND', 'BRA', 'MEX', 'ESP', 'ITA', 'NLD', 'POL', 'CHE', 'SWE', 'NOR', 'DNK', 'FIN', 'AUT', 'BEL', 'IRL', 'PRT', 'SGP', 'HKG', 'JPN', 'KOR', 'NZL', 'ZAF', 'ARE', 'ISR', 'TUR', 'CHN']).optional(),
-  provinceState: z.string().optional(), // Province/state for CA/US
+  country: z.enum(['USA', 'CAN', 'IND']).optional(),
+  provinceState: z.string().optional(), // Province/state for CA/US/IN
+  city: z.string().optional(), // City for USA/CAN/IND
   jobType: z.enum(['fulltime', 'parttime', 'contract', 'internship', 'temporary']).optional(),
   easyApply: z.boolean().optional(),
   radiusKm: z.number().int().positive().optional(),
@@ -44,6 +45,8 @@ export const JobFilterSchema = z.object({
   seniority: z.enum(['intern', 'entry', 'mid', 'senior', 'lead', 'unspecified']).optional(),
   // Employment type (for ATS sources, separate from JobSpy jobType)
   employmentType: z.enum(['full-time', 'part-time', 'contract', 'temporary', 'freelance', 'unspecified']).optional(),
+  // Fetch full job descriptions (slower, default false)
+  fetchDescription: z.boolean().optional(),
 });
 
 export type JobFilter = z.infer<typeof JobFilterSchema>;
@@ -75,14 +78,20 @@ export const JobSpyFilterSchema = z.object({
   workArrangement: z.enum(['remote', 'hybrid', 'onsite']).optional(),
   // Date posted range (JobSpy uses hours_old)
   postedWithinHours: z.number().int().positive().optional(),
-  // Country for Indeed/Glassdoor
-  country: z.enum(['USA', 'CAN', 'GBR', 'AUS', 'DEU', 'FRA', 'IND', 'BRA', 'MEX', 'ESP', 'ITA', 'NLD', 'POL', 'CHE', 'SWE', 'NOR', 'DNK', 'FIN', 'AUT', 'BEL', 'IRL', 'PRT', 'SGP', 'HKG', 'JPN', 'KOR', 'NZL', 'ZAF', 'ARE', 'ISR', 'TUR', 'CHN']).optional(),
+  // Country for Indeed/Glassdoor (limited to USA, CAN, IND)
+  country: z.enum(['USA', 'CAN', 'IND']).optional(),
+  // Province/State
+  provinceState: z.string().optional(),
+  // City
+  city: z.string().optional(),
   // Job type
   jobType: z.enum(['fulltime', 'parttime', 'contract', 'internship', 'temporary']).optional(),
   // Easy apply filter
   easyApply: z.boolean().optional(),
   // Radius (km) - only if reliable
   radiusKm: z.number().int().positive().optional(),
+  // Fetch full job descriptions (slower, default false)
+  fetchDescription: z.boolean().optional(),
 });
 export type JobSpyFilter = z.infer<typeof JobSpyFilterSchema>;
 
@@ -153,6 +162,12 @@ export interface RawJob {
   descriptionStatus?: 'complete' | 'partial' | 'missing' | 'blocked' | 'closed';
   salary?: { min?: number; max?: number; currency?: string; period?: 'hour' | 'month' | 'year' };
   postedAt?: Date;
+
+  // Phase 6A: JobSpy-specific fields (may be unavailable for some sources)
+  jobType?: 'fulltime' | 'parttime' | 'contract' | 'internship' | 'temporary';
+  workArrangement?: 'remote' | 'hybrid' | 'onsite';
+  isRemote?: boolean;
+  emails?: string[];
 }
 
 export interface JobDetail {

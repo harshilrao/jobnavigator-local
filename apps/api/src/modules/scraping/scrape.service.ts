@@ -25,11 +25,57 @@ import {
   type ScrapeSourceDescriptor,
 } from './adapters';
 import { type JobFilter } from '@jobnavigator/shared';
+import { fetchJobsViaJobSpy, terminateJobSpyWorker } from './jobspy-bridge';
 
 /**
  * Maximum jobs to save per source per session. Prevents runaway imports.
  */
 const MAX_JOBS_PER_SOURCE = 50;
+
+/** Track per-source timing for ETA calculation */
+interface SourceTiming {
+  source: JobSource;
+  jobCount: number;
+  elapsedMs: number;
+  startedAt: number;
+}
+
+/** Calculate ETA based on observed throughput */
+function calculateETA(
+  processed: number,
+  totalExpected: number,
+  elapsedMs: number,
+  sourceTimings: SourceTiming[]
+): string {
+  if (processed === 0 || totalExpected === 0) return 'Calculating…';
+
+  // Use overall throughput if we have enough data
+  const overallRate = processed / (elapsedMs / 1000); // jobs per second
+  const remaining = totalExpected - processed;
+
+  if (overallRate <= 0) return 'Calculating…';
+
+  const etaSeconds = remaining / overallRate;
+
+  if (etaSeconds < 60) {
+    return `~${Math.round(etaSeconds)}s`;
+  } else if (etaSeconds < 3600) {
+    return `~${Math.round(etaSeconds / 60)}m`;
+  }
+  return 'Calculating…';
+}
+
+/** Format elapsed time for display */
+function formatElapsed(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
 
 /** Resolve company name to Company document (create if needed). */
 async function resolveCompany(
@@ -50,6 +96,93 @@ async function resolveCompany(
 }
 
 /**
+ * Extract derived fields from job description text.
+ * These are clearly labelled as DERIVED and not employer-verified.
+ */
+function extractDerivedFields(description?: string): {
+  derivedSkills: string[];
+  derivedExperienceYears?: string;
+  derivedEducation?: string;
+  derivedBenefits: string[];
+  derivedRequirements: string[];
+} {
+  const result = {
+    derivedSkills: [] as string[],
+    derivedExperienceYears: undefined as string | undefined,
+    derivedEducation: undefined as string | undefined,
+    derivedBenefits: [] as string[],
+    derivedRequirements: [] as string[],
+  };
+
+  if (!description) return result;
+
+  const text = description.toLowerCase();
+
+  // Common skill keywords to look for
+  const skillKeywords = [
+    'javascript', 'typescript', 'python', 'java', 'c++', 'c#', 'go', 'rust', 'ruby', 'php',
+    'react', 'angular', 'vue', 'svelte', 'next.js', 'nuxt', 'node.js', 'express', 'django',
+    'flask', 'spring', 'rails', 'laravel', 'aws', 'azure', 'gcp', 'docker', 'kubernetes',
+    'terraform', 'ansible', 'jenkins', 'gitlab', 'github', 'ci/cd', 'sql', 'nosql', 'mongodb',
+    'postgresql', 'mysql', 'redis', 'elasticsearch', 'kafka', 'rabbitmq', 'graphql', 'rest',
+    'microservices', 'agile', 'scrum', 'kanban', 'jira', 'confluence', 'testing', 'jest',
+    'cypress', 'playwright', 'selenium', 'tdd', 'bdd', 'machine learning', 'ai', 'data science',
+    'pandas', 'numpy', 'tensorflow', 'pytorch', 'spark', 'hadoop', 'airflow', 'dbt',
+  ];
+
+  // Extract skills mentioned in description
+  for (const skill of skillKeywords) {
+    if (text.includes(skill)) {
+      result.derivedSkills.push(skill);
+    }
+  }
+
+  // Extract experience years (e.g., "5 years", "3+ years", "2-5 years")
+  const experienceMatch = text.match(/(\d+\+?\s*(?:-|to)\s*\d+\s*years?|\d+\+?\s*years?)/i);
+  if (experienceMatch) {
+    result.derivedExperienceYears = experienceMatch[1].trim();
+  }
+
+  // Extract education requirements
+  const educationKeywords = [
+    'bachelor', 'master', 'phd', 'doctorate', 'degree', 'diploma', 'certification',
+    'associate', 'bs', 'ms', 'ba', 'ma',
+  ];
+  for (const edu of educationKeywords) {
+    if (text.includes(edu)) {
+      result.derivedEducation = edu;
+      break;
+    }
+  }
+
+  // Extract benefits
+  const benefitKeywords = [
+    'health insurance', 'dental', 'vision', '401k', '401(k)', 'pension', 'rrsp',
+    'paid time off', 'pto', 'vacation', 'sick leave', 'parental leave',
+    'remote work', 'flexible hours', 'work from home', 'wfh', 'hybrid',
+    'learning budget', 'education stipend', 'conference', 'training',
+    'stock options', 'equity', 'bonus', 'profit sharing',
+    'gym', 'wellness', 'mental health', 'therapy',
+  ];
+  for (const benefit of benefitKeywords) {
+    if (text.includes(benefit)) {
+      result.derivedBenefits.push(benefit);
+    }
+  }
+
+  // Extract requirements (look for "requirements", "qualifications", "must have" sections)
+  const reqSection = text.match(/(?:requirements?|qualifications?|must have|should have|we need)[:\s]*([^.]*(?:\.[^.]*){0,10})/i);
+  if (reqSection && reqSection[1]) {
+    const reqText = reqSection[1].trim();
+    // Split by bullet points or semicolons
+    const items = reqText.split(/[•\-\*;\n]/).map(s => s.trim()).filter(s => s.length > 10 && s.length < 200);
+    result.derivedRequirements = items.slice(0, 10); // Limit to 10
+  }
+
+  return result;
+}
+
+/**
  * Convert a raw job from an adapter into a Job document, applying dedup
  * against existing provenance.source + provenance.sourceJobId.
  */
@@ -65,6 +198,11 @@ async function upsertJobFromRawImpl(
     url?: string;
     company?: string;
     postedAt?: Date;
+    // Phase 6A: Additional JobSpy fields
+    jobType?: 'fulltime' | 'parttime' | 'contract' | 'internship' | 'temporary';
+    workArrangement?: 'remote' | 'hybrid' | 'onsite';
+    isRemote?: boolean;
+    emails?: string[];
   },
   source: JobSource,
   _sessionId: string,
@@ -98,6 +236,9 @@ async function upsertJobFromRawImpl(
   // Resolve company (create if needed)
   const companyId = await resolveCompany(raw.company);
 
+  // Extract derived fields from description (clearly labelled as DERIVED)
+  const derived = extractDerivedFields(raw.description);
+
   try {
     const doc = await Job.create({
       ownerId: new Types.ObjectId(ownerId),
@@ -129,6 +270,18 @@ async function upsertJobFromRawImpl(
       qualityStatus: 'limited',
       isClosed: false,
       savedState: 'none',
+
+      // Phase 6A: JobSpy-specific fields
+      jobType: raw.jobType,
+      workArrangement: raw.workArrangement ?? (raw.isRemote ? 'remote' : undefined),
+      postedAt: raw.postedAt,
+      emails: raw.emails,
+      // Derived fields (clearly labelled)
+      derivedSkills: derived.derivedSkills,
+      derivedExperienceYears: derived.derivedExperienceYears,
+      derivedEducation: derived.derivedEducation,
+      derivedBenefits: derived.derivedBenefits,
+      derivedRequirements: derived.derivedRequirements,
     });
 
     return { saved: true, jobId: doc.id };
@@ -157,6 +310,8 @@ async function emitEvent(
     jobTitle?: string;
     counts?: ScrapeSourceCount[];
     progress?: number;
+    elapsedMs?: number;
+    eta?: string;
   } = {},
 ): Promise<ScrapeEventDoc | null> {
   try {
@@ -170,6 +325,8 @@ async function emitEvent(
       jobTitle: opts.jobTitle,
       counts: opts.counts,
       progress: opts.progress,
+      elapsedMs: opts.elapsedMs,
+      eta: opts.eta,
       timestamp: new Date(),
     });
 
@@ -316,7 +473,7 @@ export async function getScrapeSession(
 
 /**
  * Cancel a running scrape session. Sets cancelRequested so the service loop
- * stops on the next check.
+ * stops on the next check. Also terminates the JobSpy worker if running.
  */
 export async function cancelScrapeSession(
   ownerId: string,
@@ -331,7 +488,9 @@ export async function cancelScrapeSession(
   if (session.status === 'running') {
     session.status = 'cancelled';
     session.completedAt = new Date();
-  } else if (session.status === 'queued') {
+    // Terminate the JobSpy worker process tree
+    await terminateJobSpyWorker();
+  } else if (session.status === 'queued' || session.status === 'paused') {
     session.status = 'cancelled';
     session.completedAt = new Date();
   }
@@ -394,6 +553,7 @@ export async function getScrapeEvents(
  *   - If cancelled: status = 'cancelled'
  *
  * Cooperative cancellation: checks session.cancelRequested between jobs and sources.
+ * Emits truthful progress events with elapsed time and evidence-based ETA.
  */
 export async function runScrapeSession(
   sessionId: string,
@@ -435,6 +595,8 @@ export async function runScrapeSession(
 
   const currentOffset = session.nextOffset ?? 0;
   const batchLimit = session.batchLimit ?? 10;
+  const sessionStartedAt = session.startedAt?.getTime() ?? Date.now();
+  const batchStartedAt = Date.now();
 
   console.log('[Scrape Service] Resuming session at offset:', { currentOffset, batchLimit });
 
@@ -444,18 +606,59 @@ export async function runScrapeSession(
   let totalFailed = 0;
   let anySourceHasMore = false;
 
+  // Track timing for ETA
+  const sourceTimings: SourceTiming[] = [];
+  let jobsProcessedInBatch = 0;
+  let jobsExpectedInBatch = batchLimit * session.sources.length; // rough estimate
+
+  // Create abort controller for this batch
+  const batchAbortController = new AbortController();
+  const abortSignal = batchAbortController.signal;
+
+  // Helper to emit progress with ETA
+  const emitProgress = async (source?: JobSource, message?: string) => {
+    const elapsedMs = Date.now() - batchStartedAt;
+    const eta = calculateETA(jobsProcessedInBatch, jobsExpectedInBatch, elapsedMs, sourceTimings);
+    await emitEvent(session.id, ownerId, 'progress', {
+      source,
+      message: message ?? `Processing… ${jobsProcessedInBatch}/${jobsExpectedInBatch}`,
+      progress: jobsExpectedInBatch > 0 ? Math.min(99, Math.round((jobsProcessedInBatch / jobsExpectedInBatch) * 100)) : 0,
+      elapsedMs,
+      eta,
+      counts: session.counts,
+    });
+  };
+
+  // Start event
+  await emitEvent(session.id, ownerId, 'started', {
+    message: `Batch started: ${session.sources.length} source(s), up to ${batchLimit} jobs each`,
+    progress: 0,
+    elapsedMs: 0,
+    eta: 'Calculating…',
+    counts: session.counts,
+  });
+
   try {
     for (const source of session.sources) {
-      if (await isCancelled(session.id, ownerId)) break;
+      // Check cancellation before each source
+      if (await isCancelled(session.id, ownerId)) {
+        console.log('[Scrape Service] Cancellation detected before source:', source);
+        break;
+      }
+      if (abortSignal.aborted) break;
 
       console.log('[Scrape Service] Processing source:', { source, sessionId: session.id, offset: currentOffset, limit: batchLimit });
 
       const sourceCount = findSourceCount(session.counts, source)!;
+      const sourceStartedAt = Date.now();
 
       await emitEvent(session.id, ownerId, 'source_started', {
         source,
-        message: `Starting ${source} (offset ${currentOffset})`,
-        progress: 0,
+        message: `Starting ${source} (offset ${currentOffset}, limit ${batchLimit})`,
+        progress: jobsExpectedInBatch > 0 ? Math.min(99, Math.round((jobsProcessedInBatch / jobsExpectedInBatch) * 100)) : 0,
+        elapsedMs: Date.now() - batchStartedAt,
+        eta: calculateETA(jobsProcessedInBatch, jobsExpectedInBatch, Date.now() - batchStartedAt, sourceTimings),
+        counts: session.counts,
       });
 
       const cfg = userConfiguredSources[source];
@@ -471,10 +674,10 @@ export async function runScrapeSession(
       console.log('[Scrape Service] Adapter created for source:', { source, adapterSourceId: adapter.sourceId, configured: adapter.configured });
 
       const filter = session.filterSnapshot as JobFilter;
-      const signal = new AbortController().signal;
 
-      // Check cancellation before each source
+      // Check cancellation before fetchJobs
       if (await isCancelled(session.id, ownerId)) break;
+      if (abortSignal.aborted) break;
 
       try {
         console.log('[Scrape Service] Calling adapter.fetchJobs...', { offset: currentOffset, limit: batchLimit });
@@ -484,7 +687,7 @@ export async function runScrapeSession(
           location: filter.locations?.[0],
           limit: batchLimit,
           offset: currentOffset,
-          signal,
+          signal: abortSignal,
           filter: filter as unknown as Record<string, unknown>,
         });
         console.log('[Scrape Service] adapter.fetchJobs returned:', {
@@ -497,13 +700,31 @@ export async function runScrapeSession(
           anySourceHasMore = true;
         }
 
+        // Cancellation check after fetch
         if (await isCancelled(session.id, ownerId)) break;
+        if (abortSignal.aborted) break;
 
         sourceCount.fetched += result.jobs.length;
         totalFetched += result.jobs.length;
+        jobsExpectedInBatch = Math.max(jobsExpectedInBatch, totalFetched);
+
+        // Emit job_discovered for each job returned
+        for (const rawJob of result.jobs) {
+          await emitEvent(session.id, ownerId, 'job_discovered', {
+            source,
+            jobTitle: rawJob.title,
+            message: `Found: ${rawJob.title} at ${rawJob.company}`,
+            progress: jobsExpectedInBatch > 0 ? Math.min(99, Math.round((jobsProcessedInBatch / jobsExpectedInBatch) * 100)) : 0,
+            elapsedMs: Date.now() - batchStartedAt,
+            eta: calculateETA(jobsProcessedInBatch, jobsExpectedInBatch, Date.now() - batchStartedAt, sourceTimings),
+            counts: session.counts,
+          });
+        }
 
         for (const rawJob of result.jobs) {
+          // Check cancellation before each job
           if (await isCancelled(session.id, ownerId)) break;
+          if (abortSignal.aborted) break;
 
           // Apply shared filter client-side (title/company/location matching).
           if (filter.q) {
@@ -519,6 +740,7 @@ export async function runScrapeSession(
 
           sourceCount.valid += 1;
           sourceCount.matchedFilters += 1;
+          jobsProcessedInBatch += 1;
 
           // Check description status.
           if (
@@ -543,7 +765,10 @@ export async function runScrapeSession(
               jobId: saved.jobId,
               jobTitle: rawJob.title,
               message: `Saved: ${rawJob.title}`,
-              progress: Math.round((totalSaved / batchLimit) * 100),
+              progress: jobsExpectedInBatch > 0 ? Math.min(99, Math.round((jobsProcessedInBatch / jobsExpectedInBatch) * 100)) : 0,
+              elapsedMs: Date.now() - batchStartedAt,
+              eta: calculateETA(jobsProcessedInBatch, jobsExpectedInBatch, Date.now() - batchStartedAt, sourceTimings),
+              counts: session.counts,
             });
           } else if (saved.skippedReason === 'duplicate') {
             sourceCount.duplicates += 1;
@@ -552,13 +777,36 @@ export async function runScrapeSession(
               source,
               jobTitle: rawJob.title,
               message: `Skipped (duplicate): ${rawJob.title}`,
+              progress: jobsExpectedInBatch > 0 ? Math.min(99, Math.round((jobsProcessedInBatch / jobsExpectedInBatch) * 100)) : 0,
+              elapsedMs: Date.now() - batchStartedAt,
+              eta: calculateETA(jobsProcessedInBatch, jobsExpectedInBatch, Date.now() - batchStartedAt, sourceTimings),
+              counts: session.counts,
             });
           } else {
             sourceCount.skipped += 1;
             totalSkipped += 1;
           }
+
+          // Emit progress every few jobs
+          if (jobsProcessedInBatch % 3 === 0) {
+            await emitProgress(source, `Processing ${source}… ${jobsProcessedInBatch}/${jobsExpectedInBatch}`);
+          }
         }
+
+        // Record timing for this source
+        sourceTimings.push({
+          source,
+          jobCount: result.jobs.length,
+          elapsedMs: Date.now() - sourceStartedAt,
+          startedAt: sourceStartedAt,
+        });
+
       } catch (err) {
+        // Check if it's an abort error
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          console.log('[Scrape Service] Adapter fetch aborted for source:', source);
+          break;
+        }
         sourceCount.failed += 1;
         totalFailed += 1;
         await emitEvent(session.id, ownerId, 'error', {
@@ -568,15 +816,16 @@ export async function runScrapeSession(
       }
     }
 
-    // Update session with new totals and pagination state
-    session.totalFetched += totalFetched;
-    session.totalSaved += totalSaved;
-    session.totalSkipped += totalSkipped;
-    session.totalFailed += totalFailed;
+    // Check for cancellation after all sources
+    const wasCancelled = await isCancelled(session.id, ownerId) || abortSignal.aborted;
 
-    if (session.cancelRequested) {
+    if (wasCancelled) {
+      console.log('[Scrape Service] Session was cancelled, terminating worker');
+      // Ensure JobSpy worker is terminated on cancellation
+      await terminateJobSpyWorker();
       session.status = 'cancelled';
       session.completedAt = new Date();
+      session.cancelledAt = new Date();
     } else if (anySourceHasMore) {
       // More jobs available - pause and advance offset for next batch
       session.status = 'paused';
@@ -586,15 +835,32 @@ export async function runScrapeSession(
       session.status = 'completed';
       session.completedAt = new Date();
     }
+
+    // Update session with new totals and pagination state
+    session.totalFetched += totalFetched;
+    session.totalSaved += totalSaved;
+    session.totalSkipped += totalSkipped;
+    session.totalFailed += totalFailed;
+
     await session.save();
 
-    const finalStatus = session.status === 'cancelled' ? 'cancelled' : (session.status === 'paused' ? 'progress' : 'complete');
-    await emitEvent(session.id, ownerId, finalStatus, {
-      message: `Batch ${session.status}: ${totalSaved} saved, ${totalFailed} failed${session.status === 'paused' ? `, next offset: ${session.nextOffset}` : ''}`,
-      progress: session.status === 'paused' ? 50 : 100,
+    const finalElapsedMs = Date.now() - batchStartedAt;
+    const finalEta = wasCancelled ? 'N/A' : calculateETA(jobsProcessedInBatch, jobsExpectedInBatch, finalElapsedMs, sourceTimings);
+
+    const finalEventType = wasCancelled ? 'cancelled' : (session.status === 'paused' ? 'progress' : 'complete');
+    await emitEvent(session.id, ownerId, finalEventType, {
+      message: wasCancelled
+        ? `Cancelled: ${totalSaved} saved, ${totalSkipped} skipped, ${totalFailed} failed`
+        : `Batch ${session.status}: ${totalSaved} saved, ${totalSkipped} skipped, ${totalFailed} failed${session.status === 'paused' ? `, next offset: ${session.nextOffset}` : ''}`,
+      progress: wasCancelled || session.status === 'completed' ? 100 : 50,
+      elapsedMs: finalElapsedMs,
+      eta: finalEta,
       counts: session.counts,
     });
   } catch (err) {
+    // On any unexpected error, ensure worker is terminated
+    await terminateJobSpyWorker();
+
     session.status = 'failed';
     session.errorMessage = err instanceof Error ? err.message : String(err);
     session.completedAt = new Date();
